@@ -9,6 +9,7 @@ from kivy.properties import NumericProperty, ListProperty
 from kivy.uix.widget import Widget  # elements of a graphical user interface that form part of the User Experience
 from kivy.uix.relativelayout import RelativeLayout  # allows setting relative coordinates for children
 from kivy.uix.label import Label
+from kivy.uix.button import Button
 from kivy.core.window import Window  # used to get keyboard input
 
 kv = Builder.load_file(os.path.join(os.path.dirname(__file__), "drawing.kv"))  # load kv file
@@ -103,9 +104,6 @@ class Drawing(RelativeLayout):
         Window.bind(on_key_down=self.on_key_down, on_key_up=self.on_key_up)
 
         self.step = 50
-        self.direction = (0, 1)
-
-        # Speed settings: base speed is slower, max speed when pressed longer
         self.base_speed = 0.4
         self.max_speed = 0.08
         self.current_speed = self.base_speed
@@ -114,6 +112,63 @@ class Drawing(RelativeLayout):
 
         self.game_over = False
         self.game_over_label = None
+        self.restart_button = None
+        self.play_again_button = None
+
+        self.started = False
+        self.game_started = False
+        self.frozen = True
+
+        self.triangle = None
+        self.squares = []
+        self.snake = None
+        self.start_label = None
+        self.press_key_label = None
+        self.move_event = None
+
+        self.setup_game()
+
+    def setup_game(self):
+        # Clean up existing snake and UI widgets if any
+        if self.triangle and self.triangle in self.children:
+            self.remove_widget(self.triangle)
+        for sq in self.squares:
+            if sq in self.children:
+                self.remove_widget(sq)
+        if self.start_label and self.start_label in self.children:
+            self.remove_widget(self.start_label)
+        if self.game_over_label and self.game_over_label in self.children:
+            self.remove_widget(self.game_over_label)
+        if self.restart_button and self.restart_button in self.children:
+            self.remove_widget(self.restart_button)
+
+        self.game_over = False
+        self.game_over_label = None
+        self.restart_button = None
+        self.play_again_button = None
+
+        self.started = False
+        self.game_started = False
+        self.frozen = True
+
+        self.current_speed = self.base_speed
+        self.active_key_direction = None
+
+        if self.move_event:
+            Clock.unschedule(self.move_event)
+            self.move_event = None
+        if self.speed_boost_event:
+            Clock.unschedule(self.speed_boost_event)
+            self.speed_boost_event = None
+
+        # Random initial orientation: (direction, angle)
+        orientations = [
+            ((0, 1), 0),
+            ((-1, 0), 90),
+            ((0, -1), 180),
+            ((1, 0), 270),
+        ]
+        self.direction, initial_angle = random.choice(orientations)
 
         self.triangle = Triangle()
         max_x = max(0, int(Window.width - self.triangle.width))
@@ -121,7 +176,7 @@ class Drawing(RelativeLayout):
         start_x = random.randint(0, max_x)
         start_y = random.randint(0, max_y)
         self.triangle.pos = (start_x, start_y)
-        self.triangle.angle = 0
+        self.triangle.angle = initial_angle
 
         # Linked list for snake body (composed of head and tail formed with squares)
         self.snake = LinkedList()
@@ -143,8 +198,51 @@ class Drawing(RelativeLayout):
 
         self.add_widget(self.triangle)
 
-        # Seamless movement at scheduled speed
-        self.move_event = Clock.schedule_interval(self.move_step, self.current_speed)
+        # Prompt label before the game starts
+        self.start_label = Label(
+            text="press any key",
+            font_size=40,
+            color=(1, 1, 1, 1),
+            pos_hint={'center_x': 0.5, 'center_y': 0.5}
+        )
+        self.press_key_label = self.start_label
+        self.add_widget(self.start_label)
+
+    def restart_game(self, *args):
+        self.setup_game()
+
+    def reset_game(self, *args):
+        self.setup_game()
+
+    def start_game(self, move=None):
+        if self.started or self.game_over:
+            return
+        self.started = True
+        self.game_started = True
+        self.frozen = False
+        if self.start_label:
+            self.remove_widget(self.start_label)
+            self.start_label = None
+            self.press_key_label = None
+        if move and move != (0, 0):
+            if not (move[0] == -self.direction[0] and move[1] == -self.direction[1]):
+                self.set_direction(move)
+        if not self.move_event:
+            self.move_event = Clock.schedule_interval(self.move_step, self.current_speed)
+
+    def set_direction(self, move):
+        if move == (0, 1):
+            self.triangle.angle = 0
+            self.direction = move
+        elif move == (-1, 0):
+            self.triangle.angle = 90
+            self.direction = move
+        elif move == (0, -1):
+            self.triangle.angle = 180
+            self.direction = move
+        elif move == (1, 0):
+            self.triangle.angle = 270
+            self.direction = move
 
     def set_speed(self, speed):
         if self.game_over or self.current_speed == speed:
@@ -152,7 +250,7 @@ class Drawing(RelativeLayout):
         self.current_speed = speed
         if self.move_event:
             Clock.unschedule(self.move_event)
-        self.move_event = Clock.schedule_interval(self.move_step, self.current_speed)
+            self.move_event = Clock.schedule_interval(self.move_step, self.current_speed)
 
     def _boost_speed(self, dt=0):
         if not self.game_over and self.active_key_direction is not None:
@@ -163,6 +261,10 @@ class Drawing(RelativeLayout):
 
     def end_game(self):
         self.game_over = True
+        if self.start_label:
+            self.remove_widget(self.start_label)
+            self.start_label = None
+            self.press_key_label = None
         if self.move_event:
             Clock.unschedule(self.move_event)
             self.move_event = None
@@ -177,9 +279,20 @@ class Drawing(RelativeLayout):
                 pos_hint={'center_x': 0.5, 'center_y': 0.5}
             )
             self.add_widget(self.game_over_label)
+        if not self.restart_button:
+            self.restart_button = Button(
+                text="Play Again",
+                font_size=20,
+                size_hint=(None, None),
+                size=(150, 50),
+                pos_hint={'right': 1, 'y': 0}
+            )
+            self.restart_button.bind(on_release=self.restart_game)
+            self.play_again_button = self.restart_button
+            self.add_widget(self.restart_button)
 
     def move_step(self, dt=0):
-        if self.game_over:
+        if self.game_over or not self.started:
             return
         new_x = (self.triangle.x + self.direction[0] * self.step) % Window.width
         new_y = (self.triangle.y + self.direction[1] * self.step) % Window.height
@@ -189,18 +302,29 @@ class Drawing(RelativeLayout):
 
     # On mouse press how PaintBrush behave
     def on_touch_down(self, touch):
+        if super().on_touch_down(touch):
+            return True
         pb = PaintBrush()
         pb.center = touch.pos
         self.add_widget(pb)
         re = Square()
         re.center = touch.pos
         self.add_widget(re)
+        return True
 
     # On mouse movement how PaintBrush behave
     def on_touch_move(self, touch):
+        if super().on_touch_move(touch):
+            return True
         pb = PaintBrush()
         pb.center = touch.pos
         self.add_widget(pb)
+        return True
+
+    def on_touch_up(self, touch):
+        if super().on_touch_up(touch):
+            return True
+        return super().on_touch_up(touch)
 
     def on_keyboard_closed(self):
         pass
@@ -213,23 +337,16 @@ class Drawing(RelativeLayout):
         if move == (0, 0):
             return
 
-        # Restrict 180-degree instant reversal opposite to current direction
-        if move[0] == -self.direction[0] and move[1] == -self.direction[1]:
-            return
-
-        # Update direction and angle
-        if move == (0, 1):
-            self.triangle.angle = 0
-            self.direction = move
-        elif move == (-1, 0):
-            self.triangle.angle = 90
-            self.direction = move
-        elif move == (0, -1):
-            self.triangle.angle = 180
-            self.direction = move
-        elif move == (1, 0):
-            self.triangle.angle = 270
-            self.direction = move
+        if not self.started:
+            # Restrict 180-degree instant reversal opposite to current orientation
+            if move[0] == -self.direction[0] and move[1] == -self.direction[1]:
+                return
+            self.start_game(move)
+        else:
+            # Restrict 180-degree instant reversal opposite to current direction
+            if move[0] == -self.direction[0] and move[1] == -self.direction[1]:
+                return
+            self.set_direction(move)
 
         # Handle longer press acceleration
         if self.active_key_direction == move:
@@ -254,13 +371,13 @@ class Drawing(RelativeLayout):
 
 def keyboard_handler(instance, key, scancode=None, codepoint=None, modifiers=None):
     print("key event: %s" % [instance, key, scancode, codepoint, modifiers])
-    if codepoint in ('w', 'W') or key == 273:
+    if codepoint in ('w', 'W') or key in (273, '273', 119, '119'):
         return (0, 1)
-    elif codepoint in ('a', 'A') or key == 276:
+    elif codepoint in ('a', 'A') or key in (276, '276', 97, '97'):
         return (-1, 0)
-    elif codepoint in ('s', 'S') or key == 274:
+    elif codepoint in ('s', 'S') or key in (274, '274', 115, '115'):
         return (0, -1)
-    elif codepoint in ('d', 'D') or key == 275:
+    elif codepoint in ('d', 'D') or key in (275, '275', 100, '100'):
         return (1, 0)
     return (0, 0)
 
