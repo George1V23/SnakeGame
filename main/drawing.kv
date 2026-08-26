@@ -1,5 +1,6 @@
 #for assigning random color to the brush
 #: import rnd random
+#: import Window kivy.core.window.Window
 
 # Drawing pad creation
 <Drawing>:
@@ -22,11 +23,104 @@
                 (self.x, self.y, self.x + self.width / 4, self.y,
                 self.x + self.width / 4, self.y + self.height / 4)
 
-# Drawing pad creation
+# Square widget coding
 <Square>:
+    size_hint: None, None
+    size: 50, 50
     canvas:
         Color:
-            rgb: .2, .5, .5
+            rgb: 1, 1, 1
         Rectangle:
-            size: root.size
-            pos: root.pos
+            size: self.size
+            pos: self.pos
+
+# Triangle widget coding
+<Triangle>:
+    angle: 0
+    color: [rnd.random(), rnd.random(), rnd.random()]
+    size_hint: None, None
+    size: 50, 50
+    canvas:
+        # 1. Primary instance
+        PushMatrix
+        Translate:
+            xy: self.x, self.y
+        Rotate:
+            angle: root.angle
+            origin: self.width / 2, self.height / 2
+        Color:
+            rgb: root.color
+        Triangle:
+            points: (0, 0, self.width, 0, self.width / 2, self.height)
+        Color:
+            rgb: 0, 0, 0
+        Ellipse:
+            pos: self.width * 0.25, self.height * 0.5
+            size: self.width * 0.14, self.height * 0.14
+        Ellipse:
+            pos: self.width * 0.61, self.height * 0.5
+            size: self.width * 0.14, self.height * 0.14
+        PopMatrix
+
+        # 2. Wrapped horizontal instance
+        PushMatrix
+        Translate:
+            xy: self.x - Window.width, self.y
+        Rotate:
+            angle: root.angle
+            origin: self.width / 2, self.height / 2
+        Color:
+            rgb: root.color
+        Triangle:
+            points: (0, 0, self.width, 0, self.width / 2, self.height)
+        Color:
+            rgb: 0, 0, 0
+        Ellipse:
+            pos: self.width * 0.25, self.height * 0.5
+            size: self.width * 0.14, self.height * 0.14
+        Ellipse:
+            pos: self.width * 0.61, self.height * 0.5
+            size: self.width * 0.14, self.height * 0.14
+        PopMatrix
+
+        # 3. Wrapped vertical instance
+        PushMatrix
+        Translate:
+            xy: self.x, self.y - Window.height
+        Rotate:
+            angle: root.angle
+            origin: self.width / 2, self.height / 2
+        Color:
+            rgb: root.color
+        Triangle:
+            points: (0, 0, self.width, 0, self.width / 2, self.height)
+        Color:
+            rgb: 0, 0, 0
+        Ellipse:
+            pos: self.width * 0.25, self.height * 0.5
+            size: self.width * 0.14, self.height * 0.14
+        Ellipse:
+            pos: self.width * 0.61, self.height * 0.5
+            size: self.width * 0.14, self.height * 0.14
+        PopMatrix
+
+        # 4. Wrapped corner instance
+        PushMatrix
+        Translate:
+            xy: self.x - Window.width, self.y - Window.height
+        Rotate:
+            angle: root.angle
+            origin: self.width / 2, self.height / 2
+        Color:
+            rgb: root.color
+        Triangle:
+            points: (0, 0, self.width, 0, self.width / 2, self.height)
+        Color:
+            rgb: 0, 0, 0
+        Ellipse:
+            pos: self.width * 0.25, self.height * 0.5
+            size: self.width * 0.14, self.height * 0.14
+        Ellipse:
+            pos: self.width * 0.61, self.height * 0.5
+            size: self.width * 0.14, self.height * 0.14
+        PopMatrix
