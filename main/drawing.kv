@@ -25,23 +25,24 @@
 
 # Square widget coding
 <Square>:
+    color: [rnd.random(), rnd.random(), rnd.random()]
     size_hint: None, None
-    size: 50, 50
+    size: 25, 25
     canvas:
         Color:
-            rgb: 1, 1, 1
+            rgb: root.color
         Rectangle:
             size: self.size
-            pos: self.pos
+            pos: self.x + (50 - self.width) / 2, self.y + (50 - self.height) / 2
         Rectangle:
             size: self.size
-            pos: self.x - Window.width, self.y
+            pos: self.x + (50 - self.width) / 2 - Window.width, self.y + (50 - self.height) / 2
         Rectangle:
             size: self.size
-            pos: self.x, self.y - Window.height
+            pos: self.x + (50 - self.width) / 2, self.y + (50 - self.height) / 2 - Window.height
         Rectangle:
             size: self.size
-            pos: self.x - Window.width, self.y - Window.height
+            pos: self.x + (50 - self.width) / 2 - Window.width, self.y + (50 - self.height) / 2 - Window.height
 
 # Triangle widget coding
 <Triangle>:

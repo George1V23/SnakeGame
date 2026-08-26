@@ -8,6 +8,7 @@ from kivy.lang import Builder  # allows loading in Kv Design language regardless
 from kivy.properties import NumericProperty, ListProperty
 from kivy.uix.widget import Widget  # elements of a graphical user interface that form part of the User Experience
 from kivy.uix.relativelayout import RelativeLayout  # allows setting relative coordinates for children
+from kivy.uix.label import Label
 from kivy.core.window import Window  # used to get keyboard input
 
 kv = Builder.load_file(os.path.join(os.path.dirname(__file__), "drawing.kv"))  # load kv file
@@ -20,7 +21,7 @@ class PaintBrush(Widget):
 
 # Create a square for drawing
 class Square(Widget):
-    pass
+    color = ListProperty([1, 1, 1])
 
 
 # Create a triangle for drawing
@@ -79,6 +80,17 @@ class LinkedList:
         if self.head and self.head.widget:
             self.head.widget.pos = new_head_pos
 
+    def check_collision(self):
+        if not self.head or not self.head.widget:
+            return False
+        hx, hy = self.head.widget.x, self.head.widget.y
+        curr = self.head.next
+        while curr:
+            if curr.widget and abs(curr.widget.x - hx) < 1 and abs(curr.widget.y - hy) < 1:
+                return True
+            curr = curr.next
+        return False
+
 
 SnakeLinkedList = LinkedList
 
@@ -99,6 +111,9 @@ class Drawing(RelativeLayout):
         self.current_speed = self.base_speed
         self.active_key_direction = None
         self.speed_boost_event = None
+
+        self.game_over = False
+        self.game_over_label = None
 
         self.triangle = Triangle()
         max_x = max(0, int(Window.width - self.triangle.width))
@@ -132,7 +147,7 @@ class Drawing(RelativeLayout):
         self.move_event = Clock.schedule_interval(self.move_step, self.current_speed)
 
     def set_speed(self, speed):
-        if self.current_speed == speed:
+        if self.game_over or self.current_speed == speed:
             return
         self.current_speed = speed
         if self.move_event:
@@ -140,13 +155,37 @@ class Drawing(RelativeLayout):
         self.move_event = Clock.schedule_interval(self.move_step, self.current_speed)
 
     def _boost_speed(self, dt=0):
-        if self.active_key_direction is not None:
+        if not self.game_over and self.active_key_direction is not None:
             self.set_speed(self.max_speed)
 
+    def check_collision(self):
+        return self.snake.check_collision()
+
+    def end_game(self):
+        self.game_over = True
+        if self.move_event:
+            Clock.unschedule(self.move_event)
+            self.move_event = None
+        if self.speed_boost_event:
+            Clock.unschedule(self.speed_boost_event)
+            self.speed_boost_event = None
+        if not self.game_over_label:
+            self.game_over_label = Label(
+                text="Game Over",
+                font_size=50,
+                color=(1, 0, 0, 1),
+                pos_hint={'center_x': 0.5, 'center_y': 0.5}
+            )
+            self.add_widget(self.game_over_label)
+
     def move_step(self, dt=0):
+        if self.game_over:
+            return
         new_x = (self.triangle.x + self.direction[0] * self.step) % Window.width
         new_y = (self.triangle.y + self.direction[1] * self.step) % Window.height
         self.snake.update_positions((new_x, new_y))
+        if self.check_collision():
+            self.end_game()
 
     # On mouse press how PaintBrush behave
     def on_touch_down(self, touch):
@@ -167,6 +206,8 @@ class Drawing(RelativeLayout):
         pass
 
     def on_key_down(self, *args):
+        if self.game_over:
+            return
         move = keyboard_handler(*args)
         print(move)
         if move == (0, 0):
@@ -200,6 +241,8 @@ class Drawing(RelativeLayout):
             self.speed_boost_event = Clock.schedule_once(self._boost_speed, 0.25)
 
     def on_key_up(self, *args):
+        if self.game_over:
+            return
         move = keyboard_handler(*args)
         if move == self.active_key_direction or move != (0, 0):
             self.active_key_direction = None
@@ -211,13 +254,13 @@ class Drawing(RelativeLayout):
 
 def keyboard_handler(instance, key, scancode=None, codepoint=None, modifiers=None):
     print("key event: %s" % [instance, key, scancode, codepoint, modifiers])
-    if codepoint in ('w', 'W') or key in (273, '273', 119, '119'):
+    if codepoint in ('w', 'W') or key == 273:
         return (0, 1)
-    elif codepoint in ('a', 'A') or key in (276, '276', 97, '97'):
+    elif codepoint in ('a', 'A') or key == 276:
         return (-1, 0)
-    elif codepoint in ('s', 'S') or key in (274, '274', 115, '115'):
+    elif codepoint in ('s', 'S') or key == 274:
         return (0, -1)
-    elif codepoint in ('d', 'D') or key in (275, '275', 100, '100'):
+    elif codepoint in ('d', 'D') or key == 275:
         return (1, 0)
     return (0, 0)
 
