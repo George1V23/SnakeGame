@@ -33,6 +33,15 @@
         Rectangle:
             size: self.size
             pos: self.pos
+        Rectangle:
+            size: self.size
+            pos: self.x - Window.width, self.y
+        Rectangle:
+            size: self.size
+            pos: self.x, self.y - Window.height
+        Rectangle:
+            size: self.size
+            pos: self.x - Window.width, self.y - Window.height
 
 # Triangle widget coding
 <Triangle>:
