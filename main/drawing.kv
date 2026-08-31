@@ -25,31 +25,23 @@
 
 # Square widget coding
 <Square>:
-    color: [rnd.random(), rnd.random(), rnd.random()]
+    #color: [rnd.random(), rnd.random(), rnd.random()]
     size_hint: None, None
-    size: 25, 25
+    size: 20, 20
     canvas:
         Color:
             rgb: root.color
         Rectangle:
             size: self.size
-            pos: self.x + (50 - self.width) / 2, self.y + (50 - self.height) / 2
-        Rectangle:
-            size: self.size
-            pos: self.x + (50 - self.width) / 2 - Window.width, self.y + (50 - self.height) / 2
-        Rectangle:
-            size: self.size
-            pos: self.x + (50 - self.width) / 2, self.y + (50 - self.height) / 2 - Window.height
-        Rectangle:
-            size: self.size
-            pos: self.x + (50 - self.width) / 2 - Window.width, self.y + (50 - self.height) / 2 - Window.height
+            pos: self.x, self.y
+
 
 # Triangle widget coding
 <Triangle>:
     angle: 0
     color: [rnd.random(), rnd.random(), rnd.random()]
     size_hint: None, None
-    size: 50, 50
+    size: 30, 30
     canvas:
         # 1. Primary instance
         PushMatrix
@@ -63,7 +55,7 @@
         Triangle:
             points: (0, 0, self.width, 0, self.width / 2, self.height)
         Color:
-            rgb: 0, 0, 0
+            rgb: 1, rnd.random()/2, rnd.random()/5
         Ellipse:
             pos: self.width * 0.25, self.height * 0.5
             size: self.width * 0.14, self.height * 0.14

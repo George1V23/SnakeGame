@@ -4,6 +4,7 @@ import kivy
 
 from kivy.app import App  # base Class of App inherits from the App class
 from kivy.clock import Clock
+from kivy.animation import Animation  # allows smooth animations
 from kivy.lang import Builder  # allows loading in Kv Design language regardless filename
 from kivy.properties import NumericProperty, ListProperty
 from kivy.uix.widget import Widget  # elements of a graphical user interface that form part of the User Experience
@@ -35,34 +36,110 @@ class Triangle(Widget):
 class Node:
     def __init__(self, widget=None, next_node=None, prev_node=None):
         self.widget = widget
-        self.data = widget
-        self.value = widget
-        self.val = widget
         self.next = next_node
         self.prev = prev_node
 
 
 # Linked list class representing the snake's body
-class LinkedList:
-    def __init__(self):
-        self.head = None
-        self.tail = None
-        self.size = 0
+class Snake:
+    def __init__(self, color_factor=0.85, step=25):
+        self.head = Node(Triangle())
+        self.tail = Node(Square())
+        self.head.next = self.tail
+        self.tail.prev = self.head
+        self.size = 1
+        self.color_factor = color_factor
+        self.step = step
+        self._apply_color(self.tail)
 
-    def append(self, widget):
-        node = widget if isinstance(widget, Node) else Node(widget)
-        if self.head is None:
-            self.head = node
-            self.tail = node
+    @staticmethod
+    def _angle_to_direction(angle):
+        if angle == 0:
+            return (0, 1)
+        elif angle == 90:
+            return (-1, 0)
+        elif angle == 180:
+            return (0, -1)
+        elif angle == 270:
+            return (1, 0)
+        return (0, 1)
+
+    def _apply_color(self, node):
+        if (self.head and self.head.widget and hasattr(self.head.widget, 'color')
+                and node.widget and hasattr(node.widget, 'color')):
+            head_color = self.head.widget.color
+            tail_index = max(1, self.size)
+            node.widget.color = [
+                min(1.0, max(0.0, c * (self.color_factor ** tail_index)))
+                for c in head_color[:3]
+            ] + (list(head_color[3:]) if len(head_color) > 3 else [])
+
+    def position_initial_tail(self):
+        if not self.head or not self.head.widget or not self.tail or not self.tail.widget or self.head == self.tail:
+            return
+        angle = getattr(self.head.widget, 'angle', 0)
+        dir_x, dir_y = self._angle_to_direction(angle)
+        win_w = Window.width if Window else 800
+        win_h = Window.height if Window else 600
+        self.tail.widget.center = (
+            (self.head.widget.center_x - dir_x * self.step) % win_w,
+            (self.head.widget.center_y - dir_y * self.step) % win_h,
+        )
+
+    def _position_node(self, node):
+        if not node or not node.widget or not node.prev or not node.prev.widget:
+            return
+        last = node.prev
+        prev = last.prev
+        win_w = Window.width if Window else 800
+        win_h = Window.height if Window else 600
+
+        if prev and prev.widget:
+            diff_x = last.widget.center_x - prev.widget.center_x
+            diff_y = last.widget.center_y - prev.widget.center_y
+            if win_w > 0:
+                if diff_x > win_w / 2:
+                    diff_x -= win_w
+                elif diff_x < -win_w / 2:
+                    diff_x += win_w
+            if win_h > 0:
+                if diff_y > win_h / 2:
+                    diff_y -= win_h
+                elif diff_y < -win_h / 2:
+                    diff_y += win_h
+            if diff_x == 0 and diff_y == 0 and self.head and self.head.widget:
+                angle = getattr(self.head.widget, 'angle', 0)
+                dir_x, dir_y = self._angle_to_direction(angle)
+                diff_x = -dir_x * self.step
+                diff_y = -dir_y * self.step
+        elif self.head and self.head.widget:
+            angle = getattr(self.head.widget, 'angle', 0)
+            dir_x, dir_y = self._angle_to_direction(angle)
+            diff_x = -dir_x * self.step
+            diff_y = -dir_y * self.step
         else:
-            self.tail.next = node
-            node.prev = self.tail
-            self.tail = node
-        self.size += 1
-        return node
+            diff_x = 0
+            diff_y = -self.step
 
-    def add(self, widget):
-        return self.append(widget)
+        node.widget.center = (
+            (last.widget.center_x + diff_x) % win_w,
+            (last.widget.center_y + diff_y) % win_h,
+        )
+
+    def grow(self):
+        node = Node(Square())
+        self.tail.next = node
+        node.prev = self.tail
+        self.tail = node
+        self.size += 1
+        self._apply_color(node)
+        self._position_node(node)
+
+    def append(self, widget=None):
+        return self.grow(widget)
+
+    def add(self, widget=None):
+        return self.grow(widget)
 
     def __len__(self):
         return self.size
@@ -73,27 +150,37 @@ class LinkedList:
             yield curr
             curr = curr.next
 
-    def update_positions(self, new_head_pos):
+    def update_positions(self, new_head_center):
         curr = self.tail
         while curr and curr.prev:
-            curr.widget.pos = curr.prev.widget.pos
+            curr.widget.center = curr.prev.widget.center
             curr = curr.prev
         if self.head and self.head.widget:
-            self.head.widget.pos = new_head_pos
+            self.head.widget.center = new_head_center
 
     def check_collision(self):
+        """
+        Check if a collision has occurred between the head object and any subsequent objects in
+        the linked widget structure.
+
+        The method iterates through the linked list starting from the element following the head.
+        If any widget's position has coordinates that overlap or are close to the head object's
+        coordinates, a collision is detected. The check is based on absolute position differences
+        below a minimal threshold.
+
+        :returns: True if a collision is detected, otherwise False.
+        :rtype: bool
+        """
         if not self.head or not self.head.widget:
             return False
-        hx, hy = self.head.widget.x, self.head.widget.y
+        hx, hy = self.head.widget.center_x, self.head.widget.center_y
         curr = self.head.next
         while curr:
-            if curr.widget and abs(curr.widget.x - hx) < 1 and abs(curr.widget.y - hy) < 1:
+            if curr.widget and abs(curr.widget.center_x - hx) < 1 and abs(curr.widget.center_y - hy) < 1:
                 return True
             curr = curr.next
         return False
 
-
-SnakeLinkedList = LinkedList
 
 
 # Layout class where PaintBrush() class is drawn
@@ -103,7 +190,7 @@ class Drawing(RelativeLayout):
 
         Window.bind(on_key_down=self.on_key_down, on_key_up=self.on_key_up)
 
-        self.step = 50
+        self.step = 25
         self.base_speed = 0.4
         self.max_speed = 0.08
         self.current_speed = self.base_speed
@@ -119,9 +206,10 @@ class Drawing(RelativeLayout):
         self.game_started = False
         self.frozen = True
 
-        self.triangle = None
-        self.squares = []
         self.snake = None
+        self.triangle = None
+        self.head = None
+        self.snakeTail = []
         self.start_label = None
         self.press_key_label = None
         self.move_event = None
@@ -132,7 +220,7 @@ class Drawing(RelativeLayout):
         # Clean up existing snake and UI widgets if any
         if self.triangle and self.triangle in self.children:
             self.remove_widget(self.triangle)
-        for sq in self.squares:
+        for sq in self.snakeTail:
             if sq in self.children:
                 self.remove_widget(sq)
         if self.start_label and self.start_label in self.children:
@@ -170,31 +258,26 @@ class Drawing(RelativeLayout):
         ]
         self.direction, initial_angle = random.choice(orientations)
 
-        self.triangle = Triangle()
-        max_x = max(0, int(Window.width - self.triangle.width))
-        max_y = max(0, int(Window.height - self.triangle.height))
+        # Linked list for snake body (composed of head and tail formed with squares)
+        self.snake = Snake(step=self.step)
+        self.triangle = self.snake.head.widget
+        self.head = self.triangle
+        max_x = max(0, int(Window.width - self.head.width))
+        max_y = max(0, int(Window.height - self.head.height))
         start_x = random.randint(0, max_x)
         start_y = random.randint(0, max_y)
-        self.triangle.pos = (start_x, start_y)
-        self.triangle.angle = initial_angle
+        self.head.pos = (start_x, start_y)
+        self.head.angle = initial_angle
+        self.snake.position_initial_tail()
 
-        # Linked list for snake body (composed of head and tail formed with squares)
-        self.snake = LinkedList()
-        self.body = self.snake
-        self.snake_body = self.snake
-        self.snake.append(self.triangle)
-
-        # Attach 3 square objects to the head
-        self.squares = []
-        for i in range(1, 4):
-            sq = Square()
-            sq.pos = (
-                (start_x - i * self.direction[0] * self.step) % Window.width,
-                (start_y - i * self.direction[1] * self.step) % Window.height,
-            )
-            self.squares.append(sq)
-            self.snake.append(sq)
-            self.add_widget(sq)
+        # Attach 2 additional square objects to the snake tail (making 3 squares total)
+        for _ in range(2):
+            self.snake.grow()
+        self.snakeTail = []
+        for node in self.snake:
+            if node != self.snake.head and node.widget:
+                self.snakeTail.append(node.widget)
+                self.add_widget(node.widget)
 
         self.add_widget(self.triangle)
 
@@ -232,16 +315,16 @@ class Drawing(RelativeLayout):
 
     def set_direction(self, move):
         if move == (0, 1):
-            self.triangle.angle = 0
+            self.head.angle = 0
             self.direction = move
         elif move == (-1, 0):
-            self.triangle.angle = 90
+            self.head.angle = 90
             self.direction = move
         elif move == (0, -1):
-            self.triangle.angle = 180
+            self.head.angle = 180
             self.direction = move
         elif move == (1, 0):
-            self.triangle.angle = 270
+            self.head.angle = 270
             self.direction = move
 
     def set_speed(self, speed):
@@ -294,35 +377,113 @@ class Drawing(RelativeLayout):
     def move_step(self, dt=0):
         if self.game_over or not self.started:
             return
-        new_x = (self.triangle.x + self.direction[0] * self.step) % Window.width
-        new_y = (self.triangle.y + self.direction[1] * self.step) % Window.height
-        self.snake.update_positions((new_x, new_y))
+        new_center_x = (self.head.center_x + self.direction[0] * self.step) % Window.width
+        new_center_y = (self.head.center_y + self.direction[1] * self.step) % Window.height
+        self.snake.update_positions((new_center_x, new_center_y))
         if self.check_collision():
             self.end_game()
 
-    # On mouse press how PaintBrush behave
+    def _remove_touch_graphics(self, touch):
+        """
+        Remove Kivy's red transparent circle-point graphics from the window canvas.
+        """
+        if hasattr(touch, 'multitouch_sim'):
+            touch.multitouch_sim = False
+        win = self.get_root_window() or Window
+        if hasattr(touch, 'clear_graphics'):
+            touch.clear_graphics(win)
+        elif '_drawelement' in touch.ud:
+            de = touch.ud.pop('_drawelement', None)
+            if de is not None and win:
+                try:
+                    win.canvas.after.remove(de[0])
+                    win.canvas.after.remove(de[1])
+                except Exception:
+                    pass
+
+    def _start_pulsating(self, touch):
+        """
+        Make the red transparent circle-point from right-click pulsate on the window canvas.
+        """
+        de = touch.ud.get('_drawelement')
+        if not de or len(de) < 2:
+            return
+        color, ellipse = de[0], de[1]
+
+        # Stop existing animations on the ellipse if any
+        Animation.stop_all(ellipse)
+
+        cx = ellipse.pos[0] + ellipse.size[0] / 2.0
+        cy = ellipse.pos[1] + ellipse.size[1] / 2.0
+
+        min_size = 12
+        max_size = 28
+        min_pos = (cx - min_size / 2.0, cy - min_size / 2.0)
+        max_pos = (cx - max_size / 2.0, cy - max_size / 2.0)
+
+        anim = (
+            Animation(size=(max_size, max_size), pos=max_pos, duration=0.5, t='in_out_sine') +
+            Animation(size=(min_size, min_size), pos=min_pos, duration=0.5, t='in_out_sine')
+        )
+        anim.repeat = True
+        anim.start(ellipse)
+
+    # Handle touch down / mouse click events
     def on_touch_down(self, touch):
+        # Allow child UI widgets (e.g. restart button) to process touch first
         if super().on_touch_down(touch):
             return True
-        pb = PaintBrush()
-        pb.center = touch.pos
-        self.add_widget(pb)
-        re = Square()
-        re.center = touch.pos
-        self.add_widget(re)
+
+        # Mouse scrolling: draw PaintBrush little triangles with random coloring from drawing.kv
+        if touch.is_mouse_scrolling or (hasattr(touch, 'button') and 'scroll' in str(touch.button)):
+            pb = PaintBrush()
+            pb.center = touch.pos  # place paintbrush triangle at scroll position
+            self.add_widget(pb)  # add paintbrush widget to canvas
+            return True
+
+        # Middle click: remove Kivy's red transparent circle-point
+        if hasattr(touch, 'button') and touch.button == 'middle':
+            self._remove_touch_graphics(touch)
+            return True
+
+        # Right click: make Kivy's red transparent circle-point pulsate on window canvas
+        if hasattr(touch, 'button') and touch.button == 'right':
+            self._start_pulsating(touch)
+            return True
+
+        # Left click (default touch): draw a square widget at touch position
+        if not hasattr(touch, 'button') or touch.button == 'left':
+            re = Square()
+            re.center = touch.pos  # center square at click position
+            self.add_widget(re)  # add square widget to canvas
+            return True
+
         return True
 
-    # On mouse movement how PaintBrush behave
+    # Handle touch move / mouse drag events
     def on_touch_move(self, touch):
+        # Allow child UI widgets to process touch move first
         if super().on_touch_move(touch):
             return True
-        pb = PaintBrush()
-        pb.center = touch.pos
-        self.add_widget(pb)
+        # Middle click: ensure red transparent circle-point is removed on drag
+        if hasattr(touch, 'button') and touch.button == 'middle':
+            self._remove_touch_graphics(touch)
+            return True
+        # Do not draw paintbrush on drag so left-click square remains as is
         return True
 
+    # Handle touch up / mouse release events
     def on_touch_up(self, touch):
+        # Allow child UI widgets to process touch up first
         if super().on_touch_up(touch):
+            return True
+        # Middle click: remove graphics on release
+        if hasattr(touch, 'button') and touch.button == 'middle':
+            self._remove_touch_graphics(touch)
+            return True
+        # Right click: ensure pulsation continues around final position after release
+        if hasattr(touch, 'button') and touch.button == 'right':
+            self._start_pulsating(touch)
             return True
         return super().on_touch_up(touch)
 
@@ -371,13 +532,13 @@ class Drawing(RelativeLayout):
 
 def keyboard_handler(instance, key, scancode=None, codepoint=None, modifiers=None):
     print("key event: %s" % [instance, key, scancode, codepoint, modifiers])
-    if codepoint in ('w', 'W') or key in (273, '273', 119, '119'):
+    if codepoint in ('w', 'W') or key in (273, '273'):
         return (0, 1)
-    elif codepoint in ('a', 'A') or key in (276, '276', 97, '97'):
+    elif codepoint in ('a', 'A') or key in (276, '276'):
         return (-1, 0)
-    elif codepoint in ('s', 'S') or key in (274, '274', 115, '115'):
+    elif codepoint in ('s', 'S') or key in (274, '274'):
         return (0, -1)
-    elif codepoint in ('d', 'D') or key in (275, '275', 100, '100'):
+    elif codepoint in ('d', 'D') or key in (275, '275'):
         return (1, 0)
     return (0, 0)
 
