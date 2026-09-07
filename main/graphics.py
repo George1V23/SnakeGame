@@ -1,26 +1,26 @@
 import os
 import random
-import kivy
 
 from kivy.clock import Clock
 from kivy.animation import Animation
 from kivy.lang import Builder
-from kivy.properties import BooleanProperty, NumericProperty, ListProperty
+from kivy.properties import BooleanProperty
 from kivy.uix.widget import Widget
 from kivy.uix.relativelayout import RelativeLayout
 from kivy.uix.label import Label
 from kivy.uix.button import Button
 from kivy.core.window import Window
+from kivy.graphics import Color, Ellipse
 
+from snake import Snake, Square
+
+# Load kv file for widget visuals
 try:
-    from main.snake import Snake, Node, Square, Triangle
-except ImportError:
-    from snake import Snake, Node, Square, Triangle
-
-# Load kv file
-kv_file = os.path.join(os.path.dirname(__file__), "drawing.kv")
-if os.path.exists(kv_file):
-    Builder.load_file(kv_file)
+    Builder.load_file("drawing.kv")
+except FileNotFoundError:
+    kv_file = os.path.join(os.path.dirname(__file__), "drawing.kv")
+    if os.path.exists(kv_file):
+        Builder.load_file(kv_file)
 
 
 # Create the PaintBrush widget class
@@ -36,7 +36,12 @@ class Graphics(RelativeLayout):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
+        # Bind keyboard methods to Window
         Window.bind(on_key_down=self.on_key_down, on_key_up=self.on_key_up)
+        # alternative:
+        #keyboard = Window.request_keyboard(self.on_keyboard_closed, self)
+        #keyboard.bind(on_key_down=self.on_key_down)
+        #keyboard.bind(on_key_up=self.on_key_up)
 
         self.step = 25
         self.base_speed = 0.4
@@ -151,9 +156,6 @@ class Graphics(RelativeLayout):
             self.add_widget(self.start_label)
 
     def restart_game(self, *args):
-        self.setup_game()
-
-    def reset_game(self, *args):
         self.setup_game()
 
     def clear_environment(self):
@@ -384,7 +386,38 @@ class Graphics(RelativeLayout):
                 self.foods.remove(food)
 
     def _start_pulsating(self, touch):
-        """Make the red transparent circle-point from right-click pulsate on the window canvas as food."""
+        """Create our own red pulsating food circle for Edit Mode."""
+        win = self.get_root_window() or Window
+        if not win:
+            return
+
+        cx, cy = touch.pos
+        min_size = 12
+        max_size = 28
+        min_pos = (cx - min_size / 2.0, cy - min_size / 2.0)
+        max_pos = (cx - max_size / 2.0, cy - min_size / 2.0)
+
+        # Draw a real app-owned food marker instead of relying on Kivy's disabled multitouch marker.
+        with win.canvas.after:
+            color = Color(1, 0, 0, 0.45)  # transparent red food color
+            ellipse = Ellipse(pos=min_pos, size=(min_size, min_size))
+
+        # Animate the ellipse size around the same center to create a pulsating effect.
+        anim = (
+            Animation(size=(max_size, max_size), pos=max_pos, duration=0.5, t='in_out_sine') +
+            Animation(size=(min_size, min_size), pos=min_pos, duration=0.5, t='in_out_sine')
+        )
+        anim.repeat = True
+        anim.start(ellipse)
+
+        # Store enough data so collision detection and clearing can remove this food later.
+        food_entry = {
+            'center': (cx, cy),
+            'drawelement': (color, ellipse),
+            'ellipse': ellipse,
+            'color': color
+        }
+        self.foods.append(food_entry)
         de = touch.ud.get('_drawelement')
         if not de or len(de) < 2:
             return
@@ -399,7 +432,7 @@ class Graphics(RelativeLayout):
         min_size = 12
         max_size = 28
         min_pos = (cx - min_size / 2.0, cy - min_size / 2.0)
-        max_pos = (cx - max_size / 2.0, cy - max_size / 2.0)
+        max_pos = (cx - max_size / 2.0, cy - min_size / 2.0)
 
         anim = (
             Animation(size=(max_size, max_size), pos=max_pos, duration=0.5, t='in_out_sine') +
@@ -420,63 +453,66 @@ class Graphics(RelativeLayout):
 
     # Handle touch down / mouse click events
     def on_touch_down(self, touch):
-        # Allow child UI widgets (e.g. restart button) to process touch first
+        # Allow child UI widgets, such as Play Again, to process touch first.
         if super().on_touch_down(touch):
             return True
 
-        # Mouse scrolling: draw PaintBrush little triangles with random coloring from drawing.kv
+        # Play mode must not place edit objects.
+        if not self.edit_mode:
+            return False
+
+        # Mouse scrolling in Edit Mode: draw PaintBrush little triangles.
         if touch.is_mouse_scrolling or (hasattr(touch, 'button') and 'scroll' in str(touch.button)):
             pb = PaintBrush()
-            pb.center = touch.pos  # place paintbrush triangle at scroll position
-            self.add_widget(pb)  # add paintbrush widget to canvas
+            pb.center = touch.pos
+            self.add_widget(pb)
             return True
 
-        # Middle click: remove Kivy's red transparent circle-point and items
-        if hasattr(touch, 'button') and touch.button == 'middle':
+        # Middle click in Edit Mode: remove objects at the clicked position.
+        if touch.button == 'middle':
             self._remove_touch_graphics(touch)
             return True
 
-        # Right click: place pulsating circle (food)
-        if hasattr(touch, 'button') and touch.button == 'right':
+        # Right click in Edit Mode: place one app-owned pulsating food circle.
+        if touch.button == 'right':
             self._start_pulsating(touch)
             return True
 
-        # Left click (default touch): draw a square widget (obstacle) at touch position
-        if not hasattr(touch, 'button') or touch.button == 'left':
+        # Left click in Edit Mode: place one square obstacle.
+        if touch.button == 'left':
             re = Square()
-            re.center = touch.pos  # center square at click position
-            self.add_widget(re)  # add square widget to canvas
-            self.obstacles.append(re)  # record as obstacle
+            re.center = touch.pos
+            self.add_widget(re)
+            self.obstacles.append(re)
             return True
 
         return True
 
     # Handle touch move / mouse drag events
     def on_touch_move(self, touch):
-        # Allow child UI widgets to process touch move first
         if super().on_touch_move(touch):
             return True
-        # Middle click: ensure red transparent circle-point is removed on drag
+
+        # No edit drawing/removing while playing.
+        if not self.edit_mode:
+            return False
+
         if hasattr(touch, 'button') and touch.button == 'middle':
             self._remove_touch_graphics(touch)
             return True
-        # Do not draw paintbrush on drag so left-click square remains as is
+
         return True
 
     # Handle touch up / mouse release events
     def on_touch_up(self, touch):
-        # Allow child UI widgets to process touch up first
         if super().on_touch_up(touch):
             return True
-        # Middle click: remove graphics on release
-        if hasattr(touch, 'button') and touch.button == 'middle':
-            self._remove_touch_graphics(touch)
-            return True
-        # Right click: ensure pulsation continues around final position after release
-        if hasattr(touch, 'button') and touch.button == 'right':
-            self._start_pulsating(touch)
-            return True
-        return super().on_touch_up(touch)
+
+        # Do not create food/obstacles on release; creation happens only on touch down.
+        if not self.edit_mode:
+            return False
+
+        return True
 
     def on_keyboard_closed(self):
         pass
@@ -531,14 +567,20 @@ class Graphics(RelativeLayout):
 
 
 def keyboard_handler(instance, key, scancode=None, codepoint=None, modifiers=None):
-    if codepoint in ('w', 'W') or key in (273, '273'):
+    # Normalize key values because Kivy may pass ints, strings, or keycode tuples.
+    if isinstance(key, tuple):
+        key = key[0]
+    key = int(key) if str(key).isdigit() else key
+
+    if codepoint in ('w', 'W') or key in (119, 273): # w=119, up=273
         return (0, 1)
-    elif codepoint in ('a', 'A') or key in (276, '276'):
+    elif codepoint in ('a', 'A') or key in (97, 276): # a=97, left=276
         return (-1, 0)
-    elif codepoint in ('s', 'S') or key in (274, '274'):
+    elif codepoint in ('s', 'S') or key in (115, 274): # s=115, down=274
         return (0, -1)
-    elif codepoint in ('d', 'D') or key in (275, '275'):
+    elif codepoint in ('d', 'D') or key in (100, 275): # d=100, right=275
         return (1, 0)
+
     return (0, 0)
 
 

@@ -1,4 +1,3 @@
-import kivy
 from kivy.properties import NumericProperty, ListProperty
 from kivy.uix.widget import Widget
 from kivy.core.window import Window

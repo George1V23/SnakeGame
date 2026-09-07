@@ -1,25 +1,13 @@
-import os
-import random
-import kivy
-
 from kivy.app import App
-from kivy.clock import Clock
-from kivy.animation import Animation
-from kivy.lang import Builder
-from kivy.properties import BooleanProperty, NumericProperty, ListProperty
-from kivy.uix.widget import Widget
 from kivy.uix.relativelayout import RelativeLayout
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
 from kivy.uix.button import Button
-from kivy.core.window import Window
 
-try:
-    from main.snake import Snake, Node, Square, Triangle
-    from main.graphics import Graphics, Drawing, PaintBrush, keyboard_handler
-except ImportError:
-    from snake import Snake, Node, Square, Triangle
-    from graphics import Graphics, Drawing, PaintBrush, keyboard_handler
+from kivy.config import Config
+Config.set("input", "mouse", "mouse,disable_multitouch")  # disables Kivy's right/middle-click touch-circle simulator
+
+from graphics import Graphics
 
 
 # Menu layout displayed before the game starts
@@ -198,6 +186,21 @@ class Menu(RelativeLayout):
     def clear_environment(self, *args):
         if self.graphics:
             self.graphics.clear_environment()
+
+
+    """allowing touch events to pass through the disabled Menu overlay to the underlying Graphics widget"""
+    def on_touch_down(self, touch):
+        if self.disabled or self.opacity == 0:
+            return False
+        return super().on_touch_down(touch)
+    def on_touch_move(self, touch):
+        if self.disabled or self.opacity == 0:
+            return False
+        return super().on_touch_move(touch)
+    def on_touch_up(self, touch):
+        if self.disabled or self.opacity == 0:
+            return False
+        return super().on_touch_up(touch)
 
 
 # Main Application Root Container
