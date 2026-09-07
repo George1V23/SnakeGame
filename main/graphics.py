@@ -66,6 +66,7 @@ class Graphics(RelativeLayout):
         self.snakeTail = []
         self.obstacles = []
         self.foods = []
+        self.brushes = []  # stores PaintBrush widgets so Edit Mode can remove/clear them
         self.start_label = None
         self.press_key_label = None
         self.move_event = None
@@ -159,11 +160,17 @@ class Graphics(RelativeLayout):
         self.setup_game()
 
     def clear_environment(self):
-        """Clear all obstacles, food, and brush widgets from the canvas."""
+        """Clear all editable environment objects: obstacles, food, and PaintBrush marks."""
         for obs in list(self.obstacles):
             if obs in self.children:
                 self.remove_widget(obs)
         self.obstacles.clear()
+
+        # Remove all PaintBrush widgets created by mouse scrolling in Edit Mode.
+        for brush in list(self.brushes):
+            if brush in self.children:
+                self.remove_widget(brush)
+        self.brushes.clear()
 
         win = self.get_root_window() or Window
         for food in list(self.foods):
@@ -349,7 +356,53 @@ class Graphics(RelativeLayout):
         self.check_food_collision()
 
     def _remove_touch_graphics(self, touch):
-        """Remove Kivy's red transparent circle-point graphics from the window canvas and delete items at position."""
+        """Remove editable object under the cursor: obstacle, food, or PaintBrush."""
+        if hasattr(touch, 'multitouch_sim'):
+            touch.multitouch_sim = False
+        win = self.get_root_window() or Window
+        if hasattr(touch, 'clear_graphics'):
+            touch.clear_graphics(win)
+        elif '_drawelement' in touch.ud:
+            de = touch.ud.pop('_drawelement', None)
+            if de is not None and win:
+                try:
+                    win.canvas.after.remove(de[0])
+                    win.canvas.after.remove(de[1])
+                except Exception:
+                    pass
+
+        tx, ty = touch.pos
+
+        # Remove PaintBrush triangle near the middle-click position.
+        for brush in list(self.brushes):
+            if abs(brush.center_x - tx) < 25 and abs(brush.center_y - ty) < 25:
+                if brush in self.children:
+                    self.remove_widget(brush)
+                self.brushes.remove(brush)
+
+        # Remove obstacle square near the middle-click position.
+        for obs in list(self.obstacles):
+            if abs(obs.center_x - tx) < 20 and abs(obs.center_y - ty) < 20:
+                if obs in self.children:
+                    self.remove_widget(obs)
+                self.obstacles.remove(obs)
+
+        # Remove food circle near the middle-click position.
+        for food in list(self.foods):
+            cx, cy = food['center']
+            if abs(cx - tx) < 20 and abs(cy - ty) < 20:
+                de = food.get('drawelement')
+                if de is not None and win:
+                    try:
+                        Animation.stop_all(de[1])
+                        win.canvas.after.remove(de[0])
+                        win.canvas.after.remove(de[1])
+                    except Exception:
+                        pass
+                self.foods.remove(food)
+
+    def _start_pulsating(self, touch):
+        """Create one app-owned red pulsating food circle for Edit Mode."""
         if hasattr(touch, 'multitouch_sim'):
             touch.multitouch_sim = False
         win = self.get_root_window() or Window
@@ -466,6 +519,7 @@ class Graphics(RelativeLayout):
             pb = PaintBrush()
             pb.center = touch.pos
             self.add_widget(pb)
+            self.brushes.append(pb)  # remember brush widgets so Clear/Middle-click can remove them
             return True
 
         # Middle click in Edit Mode: remove objects at the clicked position.
