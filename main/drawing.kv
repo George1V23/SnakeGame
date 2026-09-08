@@ -3,7 +3,7 @@
 #: import Window kivy.core.window.Window
 
 # Drawing pad / Graphics creation
-<Graphics,Drawing>:
+<Graphics>:
     canvas:
         Color:
             rgb: .2, .5, .5
@@ -25,7 +25,6 @@
 
 # Square widget coding
 <Square>:
-    #color: [rnd.random(), rnd.random(), rnd.random()]
     size_hint: None, None
     size: 20, 20
     canvas:
@@ -35,6 +34,13 @@
             size: self.size
             pos: self.x, self.y
 
+    # Thin red line around the exact square edges used by collision logic.
+    canvas.after:
+        Color:
+            rgba: 1, 0, 0, 1 if root.show_collision_margin else 0
+        Line:
+            width: 1
+            rectangle: self.x, self.y, self.width, self.height
 
 # Triangle widget coding
 <Triangle>:
@@ -106,23 +112,10 @@
             size: self.width * 0.14, self.height * 0.14
         PopMatrix
 
-        # 4. Wrapped corner instance
-        PushMatrix
-        Translate:
-            xy: self.x - Window.width, self.y - Window.height
-        Rotate:
-            angle: root.angle
-            origin: self.width / 2, self.height / 2
+    # Thin red line showing the snake head's obstacle/food collision margin.
+    canvas.after:
         Color:
-            rgb: root.color
-        Triangle:
-            points: (0, 0, self.width, 0, self.width / 2, self.height)
-        Color:
-            rgb: 0, 0, 0
-        Ellipse:
-            pos: self.width * 0.25, self.height * 0.5
-            size: self.width * 0.14, self.height * 0.14
-        Ellipse:
-            pos: self.width * 0.61, self.height * 0.5
-            size: self.width * 0.14, self.height * 0.14
-        PopMatrix
+            rgba: 1, 0, 0, 1 if root.show_collision_margin else 0
+        Line:
+            width: 1
+            rectangle: self.x, self.y, self.width, self.height

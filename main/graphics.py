@@ -38,10 +38,10 @@ class Graphics(RelativeLayout):
 
         # Bind keyboard methods to Window
         Window.bind(on_key_down=self.on_key_down, on_key_up=self.on_key_up)
-        # alternative:
+        ''' alternative:
         #keyboard = Window.request_keyboard(self.on_keyboard_closed, self)
         #keyboard.bind(on_key_down=self.on_key_down)
-        #keyboard.bind(on_key_up=self.on_key_up)
+        #keyboard.bind(on_key_up=self.on_key_up)'''
 
         self.step = 25
         self.base_speed = 0.4
@@ -53,30 +53,25 @@ class Graphics(RelativeLayout):
         self.game_over = False
         self.game_over_label = None
         self.restart_button = None
-        self.play_again_button = None
         self.pause_label = None
 
         self.started = False
-        self.game_started = False
-        self.frozen = True
 
         self.snake = None
-        self.triangle = None
         self.head = None
         self.snakeTail = []
         self.obstacles = []
         self.foods = []
         self.brushes = []  # stores PaintBrush widgets so Edit Mode can remove/clear them
         self.start_label = None
-        self.press_key_label = None
         self.move_event = None
 
         self.setup_game()
 
     def setup_game(self):
         # Clean up existing snake widgets
-        if self.triangle and self.triangle in self.children:
-            self.remove_widget(self.triangle)
+        if self.head and self.head in self.children:
+            self.remove_widget(self.head)
         for sq in self.snakeTail:
             if sq in self.children:
                 self.remove_widget(sq)
@@ -92,13 +87,10 @@ class Graphics(RelativeLayout):
         self.game_over = False
         self.game_over_label = None
         self.restart_button = None
-        self.play_again_button = None
         self.pause_label = None
         self.is_paused = False
 
         self.started = False
-        self.game_started = False
-        self.frozen = True
 
         self.current_speed = self.base_speed
         self.active_key_direction = None
@@ -121,8 +113,7 @@ class Graphics(RelativeLayout):
 
         # Linked list for snake body (composed of head and tail formed with squares)
         self.snake = Snake(step=self.step)
-        self.triangle = self.snake.head.widget
-        self.head = self.triangle
+        self.head = self.snake.head.widget
         win_w = Window.width if Window and Window.width > 0 else 800
         win_h = Window.height if Window and Window.height > 0 else 600
         max_x = max(0, int(win_w - self.head.width))
@@ -143,7 +134,7 @@ class Graphics(RelativeLayout):
                 self.snakeTail.append(node.widget)
                 self.add_widget(node.widget)
 
-        self.add_widget(self.triangle)
+        self.add_widget(self.head)
 
         # Prompt label before the game starts (if not in edit mode)
         if not self.edit_mode:
@@ -153,7 +144,6 @@ class Graphics(RelativeLayout):
                 color=(1, 1, 1, 1),
                 pos_hint={'center_x': 0.5, 'center_y': 0.5}
             )
-            self.press_key_label = self.start_label
             self.add_widget(self.start_label)
 
     def restart_game(self, *args):
@@ -217,13 +207,10 @@ class Graphics(RelativeLayout):
         if self.started or self.game_over:
             return
         self.started = True
-        self.game_started = True
-        self.frozen = False
         if self.start_label:
             if self.start_label in self.children:
                 self.remove_widget(self.start_label)
             self.start_label = None
-            self.press_key_label = None
         if move and move != (0, 0):
             if not (move[0] == -self.direction[0] and move[1] == -self.direction[1]):
                 self.set_direction(move)
@@ -259,35 +246,48 @@ class Graphics(RelativeLayout):
     def check_collision(self):
         return self.snake.check_collision()
 
+    @staticmethod
+    def _widgets_collide(first, second):
+        """Return True when two widgets' real rectangular bounds overlap."""
+        if not first or not second:
+            return False
+
+        return (
+            first.x < second.right and
+            first.right > second.x and
+            first.y < second.top and
+            first.top > second.y
+        )
+
     def check_obstacle_collision(self):
-        """Check if snake head collided with any obstacle Square."""
+        """Check if snake head rectangle overlaps any obstacle square rectangle."""
         if not self.head:
             return False
-        hx, hy = self.head.center_x, self.head.center_y
+
         for obs in self.obstacles:
-            if abs(obs.center_x - hx) < 25 and abs(obs.center_y - hy) < 25:
+            if self._widgets_collide(self.head, obs):
                 return True
+
         return False
 
     def check_food_collision(self):
-        """Check if snake head reached any pulsating food circle."""
+        """Check if snake head reaches any food circle, then grow the snake and remove the food."""
         if not self.head:
             return
-        hx, hy = self.head.center_x, self.head.center_y
+
         win = self.get_root_window() or Window
 
         for food in list(self.foods):
-            cx, cy = food['center']
-            # Collision distance threshold with food
-            if abs(cx - hx) < 25 and abs(cy - hy) < 25:
-                # Snake eats food -> snake grows
+            cx, cy = food["center"]
+
+            # Food collision uses the food circle center against the real head rectangle.
+            if self.head.x <= cx <= self.head.right and self.head.y <= cy <= self.head.top:
                 new_node = self.snake.grow()
                 if new_node and new_node.widget:
                     self.snakeTail.append(new_node.widget)
                     self.add_widget(new_node.widget)
 
-                # Remove food from canvas and list
-                de = food.get('drawelement')
+                de = food.get("drawelement")
                 if de is not None and win:
                     try:
                         Animation.stop_all(de[1])
@@ -295,18 +295,15 @@ class Graphics(RelativeLayout):
                         win.canvas.after.remove(de[1])
                     except Exception:
                         pass
-                widget = food.get('widget')
-                if widget and widget in self.children:
-                    self.remove_widget(widget)
 
                 self.foods.remove(food)
+
 
     def end_game(self):
         self.game_over = True
         if self.start_label and self.start_label in self.children:
             self.remove_widget(self.start_label)
             self.start_label = None
-            self.press_key_label = None
         if self.move_event:
             Clock.unschedule(self.move_event)
             self.move_event = None
@@ -330,7 +327,6 @@ class Graphics(RelativeLayout):
                 pos_hint={'right': 1, 'y': 0}
             )
             self.restart_button.bind(on_release=self.restart_game)
-            self.play_again_button = self.restart_button
             self.add_widget(self.restart_button)
 
     def move_step(self, dt=0):
@@ -357,20 +353,7 @@ class Graphics(RelativeLayout):
 
     def _remove_touch_graphics(self, touch):
         """Remove editable object under the cursor: obstacle, food, or PaintBrush."""
-        if hasattr(touch, 'multitouch_sim'):
-            touch.multitouch_sim = False
         win = self.get_root_window() or Window
-        if hasattr(touch, 'clear_graphics'):
-            touch.clear_graphics(win)
-        elif '_drawelement' in touch.ud:
-            de = touch.ud.pop('_drawelement', None)
-            if de is not None and win:
-                try:
-                    win.canvas.after.remove(de[0])
-                    win.canvas.after.remove(de[1])
-                except Exception:
-                    pass
-
         tx, ty = touch.pos
 
         # Remove PaintBrush triangle near the middle-click position.
@@ -401,42 +384,6 @@ class Graphics(RelativeLayout):
                         pass
                 self.foods.remove(food)
 
-    def _start_pulsating(self, touch):
-        """Create one app-owned red pulsating food circle for Edit Mode."""
-        if hasattr(touch, 'multitouch_sim'):
-            touch.multitouch_sim = False
-        win = self.get_root_window() or Window
-        if hasattr(touch, 'clear_graphics'):
-            touch.clear_graphics(win)
-        elif '_drawelement' in touch.ud:
-            de = touch.ud.pop('_drawelement', None)
-            if de is not None and win:
-                try:
-                    win.canvas.after.remove(de[0])
-                    win.canvas.after.remove(de[1])
-                except Exception:
-                    pass
-
-        # Also remove any obstacles or food clicked by middle button
-        tx, ty = touch.pos
-        for obs in list(self.obstacles):
-            if abs(obs.center_x - tx) < 20 and abs(obs.center_y - ty) < 20:
-                if obs in self.children:
-                    self.remove_widget(obs)
-                self.obstacles.remove(obs)
-
-        for food in list(self.foods):
-            cx, cy = food['center']
-            if abs(cx - tx) < 20 and abs(cy - ty) < 20:
-                de = food.get('drawelement')
-                if de is not None and win:
-                    try:
-                        Animation.stop_all(de[1])
-                        win.canvas.after.remove(de[0])
-                        win.canvas.after.remove(de[1])
-                    except Exception:
-                        pass
-                self.foods.remove(food)
 
     def _start_pulsating(self, touch):
         """Create our own red pulsating food circle for Edit Mode."""
@@ -448,7 +395,7 @@ class Graphics(RelativeLayout):
         min_size = 12
         max_size = 28
         min_pos = (cx - min_size / 2.0, cy - min_size / 2.0)
-        max_pos = (cx - max_size / 2.0, cy - min_size / 2.0)
+        max_pos = (cx - max_size / 2.0, cy - max_size / 2.0)
 
         # Draw a real app-owned food marker instead of relying on Kivy's disabled multitouch marker.
         with win.canvas.after:
@@ -466,43 +413,10 @@ class Graphics(RelativeLayout):
         # Store enough data so collision detection and clearing can remove this food later.
         food_entry = {
             'center': (cx, cy),
-            'drawelement': (color, ellipse),
-            'ellipse': ellipse,
-            'color': color
+            'drawelement': (color, ellipse)
         }
         self.foods.append(food_entry)
-        de = touch.ud.get('_drawelement')
-        if not de or len(de) < 2:
-            return
-        color, ellipse = de[0], de[1]
 
-        # Stop existing animations on the ellipse if any
-        Animation.stop_all(ellipse)
-
-        cx = ellipse.pos[0] + ellipse.size[0] / 2.0
-        cy = ellipse.pos[1] + ellipse.size[1] / 2.0
-
-        min_size = 12
-        max_size = 28
-        min_pos = (cx - min_size / 2.0, cy - min_size / 2.0)
-        max_pos = (cx - max_size / 2.0, cy - min_size / 2.0)
-
-        anim = (
-            Animation(size=(max_size, max_size), pos=max_pos, duration=0.5, t='in_out_sine') +
-            Animation(size=(min_size, min_size), pos=min_pos, duration=0.5, t='in_out_sine')
-        )
-        anim.repeat = True
-        anim.start(ellipse)
-
-        # Record as food item
-        food_entry = {
-            'center': (cx, cy),
-            'drawelement': de,
-            'ellipse': ellipse,
-            'color': color
-        }
-        # Replace or add entry
-        self.foods.append(food_entry)
 
     # Handle touch down / mouse click events
     def on_touch_down(self, touch):
@@ -536,6 +450,7 @@ class Graphics(RelativeLayout):
         if touch.button == 'left':
             re = Square()
             re.center = touch.pos
+            re.show_collision_margin = True  # show editable obstacle collision boundary
             self.add_widget(re)
             self.obstacles.append(re)
             return True
@@ -576,6 +491,13 @@ class Graphics(RelativeLayout):
         instance = args[0] if len(args) > 0 else None
         key = args[1] if len(args) > 1 else None
         codepoint = args[3] if len(args) > 3 else None
+
+        # ESC in Play Mode: stop gameplay and return to Main Menu.
+        if key in (27, '27') and not self.edit_mode:
+            self.setup_game()
+            if hasattr(self, 'parent') and hasattr(self.parent, 'menu') and self.parent.menu:
+                self.parent.menu.show_main_menu()
+            return
 
         if codepoint in ('p', 'P') or key in (112, '112'):
             self.toggle_pause()
@@ -636,7 +558,3 @@ def keyboard_handler(instance, key, scancode=None, codepoint=None, modifiers=Non
         return (1, 0)
 
     return (0, 0)
-
-
-# Backward compatibility alias
-Drawing = Graphics

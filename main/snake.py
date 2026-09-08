@@ -1,4 +1,4 @@
-from kivy.properties import NumericProperty, ListProperty
+from kivy.properties import BooleanProperty, NumericProperty, ListProperty
 from kivy.uix.widget import Widget
 from kivy.core.window import Window
 
@@ -6,12 +6,14 @@ from kivy.core.window import Window
 # Create a square for drawing
 class Square(Widget):
     color = ListProperty([1, 1, 1])
+    show_collision_margin = BooleanProperty(True)  # draws exact square collision boundary
 
 
 # Create a triangle for drawing
 class Triangle(Widget):
     angle = NumericProperty(0)
     color = ListProperty([1, 1, 1])
+    show_collision_margin = BooleanProperty(True)  # draws exact head widget collision boundary
 
 
 # Node for Linked List
@@ -125,12 +127,6 @@ class Snake:
             self._position_node(node)
         return node
 
-    def append(self, widget=None):
-        return self.grow(widget)
-
-    def add(self, widget=None):
-        return self.grow(widget)
-
     def __len__(self):
         return self.size
 
@@ -148,25 +144,35 @@ class Snake:
         if self.head and self.head.widget:
             self.head.widget.center = new_head_center
 
+    @staticmethod
+    def _widgets_collide(first, second):
+        """Return True when two widgets' real rectangular bounds overlap."""
+        if not first or not second:
+            return False
+
+        return (
+            first.x < second.right and
+            first.right > second.x and
+            first.y < second.top and
+            first.top > second.y
+        )
+
     def check_collision(self):
         """
-        Check if a collision has occurred between the head object and any subsequent objects in
-        the linked widget structure.
+        Check collision between the snake head and its own tail/body.
 
-        The method iterates through the linked list starting from the element following the head.
-        If any widget's position has coordinates that overlap or are close to the head object's
-        coordinates, a collision is detected. The check is based on absolute position differences
-        below a minimal threshold.
-
-        :returns: True if a collision is detected, otherwise False.
-        :rtype: bool
+        The red boundary line and this logic use the same widget edges:
+        x, y, right, and top.
         """
         if not self.head or not self.head.widget:
             return False
-        hx, hy = self.head.widget.center_x, self.head.widget.center_y
+
+        head_widget = self.head.widget
         curr = self.head.next
+
         while curr:
-            if curr.widget and abs(curr.widget.center_x - hx) < 1 and abs(curr.widget.center_y - hy) < 1:
+            if self._widgets_collide(head_widget, curr.widget):
                 return True
             curr = curr.next
+
         return False
