@@ -492,8 +492,8 @@ class Graphics(RelativeLayout):
         key = args[1] if len(args) > 1 else None
         codepoint = args[3] if len(args) > 3 else None
 
-        # ESC in Play Mode: stop gameplay and return to Main Menu.
-        if key in (27, '27') and not self.edit_mode:
+        # ESC in Play Game or Edit Mode: stop gameplay and return to Main Menu.
+        if key in (27, '27'):
             self.setup_game()
             if hasattr(self, 'parent') and hasattr(self.parent, 'menu') and self.parent.menu:
                 self.parent.menu.show_main_menu()

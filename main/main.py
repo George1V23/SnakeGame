@@ -6,6 +6,7 @@ from kivy.uix.button import Button
 
 from kivy.config import Config
 Config.set("input", "mouse", "mouse,disable_multitouch")  # disables Kivy's right/middle-click touch-circle simulator
+Config.set("kivy", "exit_on_escape", "0")  # prevents ESC from closing the app
 
 from graphics import Graphics
 
