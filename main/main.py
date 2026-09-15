@@ -68,7 +68,7 @@ class Menu(RelativeLayout):
 
         # Controls description
         self.info_label = Label(
-            text="Controls: WASD / Arrows to move\nPress 'P' to Pause\nEdit Mode: Left Click = Obstacle | Right Click = Food",
+            text="Controls: WASD / Arrows to move\nPress 'P' to Pause\nEdit Mode: Left Click = Obstacle | Right Click = Food | Middle Click = Remove | Scroll = Paint brush triangles",
             font_size=14,
             halign='center',
             color=(0.8, 0.8, 0.8, 1),

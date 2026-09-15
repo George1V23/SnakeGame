@@ -1,3 +1,5 @@
+from importlib import invalidate_caches
+
 from kivy.properties import BooleanProperty, NumericProperty, ListProperty
 from kivy.uix.widget import Widget
 from kivy.core.window import Window
@@ -31,9 +33,12 @@ class Snake:
         self.tail = Node(Square())
         self.head.next = self.tail
         self.tail.prev = self.head
+
         self.size = 2
-        self.color_factor = color_factor
         self.step = step
+
+        self.color_factor = color_factor
+        self.i_color = 1 #color variation it reached
         self._apply_color(self.tail)
 
     @staticmethod
@@ -49,14 +54,36 @@ class Snake:
         return (0, 1)
 
     def _apply_color(self, node):
-        if (self.head and self.head.widget and hasattr(self.head.widget, 'color')
-                and node.widget and hasattr(node.widget, 'color')):
-            head_color = self.head.widget.color
-            tail_index = max(1, self.size - 1)
-            node.widget.color = [
-                min(1.0, max(0.0, c * (self.color_factor ** tail_index)))
-                for c in head_color[:3]
-            ] + (list(head_color[3:]) if len(head_color) > 3 else [])
+        #if (self.head and self.head.widget and hasattr(self.head.widget, 'color')
+        #        and node.widget and hasattr(node.widget, 'color')):
+        head_color = self.head.widget.color
+        scaled_rgb = [
+            c * (self.color_factor ** self.i_color)
+            for c in head_color[:3]
+        ]
+
+        #check intensity increased or lowered
+        prev_color = self.tail.prev.widget.color
+        intensity_increase = (prev_color[0] <= scaled_rgb[0] and prev_color[1] <= scaled_rgb[1] and prev_color[2] <= scaled_rgb[2])
+
+        if all(c >= 0.90 for c in scaled_rgb) and intensity_increase:
+            self.i_color += 2
+            scaled_rgb = [c*(self.color_factor**self.i_color) for c in head_color[:3]]
+            intensity_increase = False
+        elif all(c <= 0.10 for c in scaled_rgb) and not intensity_increase:
+            self.i_color -= 2
+            scaled_rgb = [c*(self.color_factor**self.i_color) for c in head_color[:3]]
+            intensity_increase = True
+
+        node.widget.color = [
+                                min(1.0, max(0.0, c))
+                                for c in scaled_rgb
+                            ] + (list(head_color[3:]) if len(head_color) > 3 else [])
+
+        if intensity_increase:
+            self.i_color -= 1
+        else: # prev_color[0] >= scaled_rgb[0] and prev_color[1] >= scaled_rgb[1] and prev_color[2] >= scaled_rgb[2]:
+            self.i_color += 1
 
     def position_initial_tail(self):
         if not self.head or not self.head.widget or not self.tail or not self.tail.widget or self.head == self.tail:
