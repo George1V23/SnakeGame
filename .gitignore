@@ -20,3 +20,7 @@ Thumbs.db
 
 # Local environment/configuration
 .env
+# Buildozer (Android builds)
+.buildozer/
+bin/
+.venv-buildozer/

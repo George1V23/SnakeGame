@@ -1,0 +1,4 @@
+# pip constraints for the Android build (used by build_android.sh through PIP_CONSTRAINT).
+# charset-normalizer >= 3.5 publishes Android wheels that python-for-android resolves but then
+# fails to install ("not a supported wheel on this platform"); 3.4.x is pure Python.
+charset-normalizer<3.5
