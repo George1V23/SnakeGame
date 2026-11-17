@@ -18,7 +18,8 @@ Config.set("input", "mouse", "mouse,disable_multitouch")  # disables Kivy's righ
 Config.set("kivy", "exit_on_escape", "0")  # prevents ESC from closing the app
 
 from graphics import Graphics
-from levels import CAMPAIGN, MAZE_CHOICES
+from editor import LevelEditor
+from levels import CAMPAIGN, CUSTOM_SLOTS, MAZE_CHOICES, is_custom
 
 
 # Menu layout displayed before the game starts
@@ -98,9 +99,9 @@ class Menu(RelativeLayout):
         self.play_btn.bind(on_release=self.start_play_mode)
         self.menu_box.add_widget(self.play_btn)
 
-        # Edit Mode Button
+        # Level Editor Button
         self.edit_btn = Button(
-            text="Edit Mode (Environment)",
+            text="Level Editor",
             font_size=24,
             size_hint=(1, None),
             height=50,
@@ -125,7 +126,7 @@ class Menu(RelativeLayout):
             text="WASD / Arrows move (hold = faster) | P Pause | M Sound | ESC Menu\n"
                  "Campaign: eat 10 food per level. Gold = timed bonus.\n"
                  "Power-ups: [color=3399ff]Slow[/color] | [color=33ffe6]Shrink[/color] | [color=cc66ff]Ghost[/color]\n"
-                 "Edit Mode: Left = Obstacle | Right = Food | Middle = Remove | Scroll = Brush",
+                 "Editor: Left = paint tool | Right = Food | Middle = Erase | Wheel = tool",
             markup=True,
             font_size=14,
             halign='center',
@@ -172,72 +173,21 @@ class Menu(RelativeLayout):
         records_back_btn.bind(on_release=self.show_main_menu)
         self.records_box.add_widget(records_back_btn)
 
-        # Edit mode top toolbar overlay
-        self.edit_bar = RelativeLayout(
-            size_hint=(1, None),
-            height=70,
-            pos_hint={'top': 1, 'x': 0}
-        )
-        with self.edit_bar.canvas.before:
-            from kivy.graphics import Color, Rectangle
-            self._bar_color = Color(0, 0, 0, 0.65)
-            self._bar_rect = Rectangle(pos=self.edit_bar.pos, size=self.edit_bar.size)
-        self.edit_bar.bind(pos=self._update_bar_rect, size=self._update_bar_rect)
-
-        self.edit_info = Label(
-            text="[EDIT MODE] Left-Click: Obstacle (Square) | Right-Click: Food (Pulsating Circle) | Middle-Click: Remove | Scroll: Brush",
-            font_size=13,
-            color=(1, 1, 0.4, 1),
-            pos_hint={'center_x': 0.42, 'center_y': 0.5}
-        )
-        self.edit_bar.add_widget(self.edit_info)
-
-        self.start_from_edit_btn = Button(
-            text="Start Game",
-            font_size=16,
-            size_hint=(None, None),
-            size=(110, 40),
-            pos_hint={'right': 0.88, 'center_y': 0.5},
-            background_color=(0.2, 0.8, 0.3, 1)
-        )
-        self.start_from_edit_btn.bind(on_release=self.start_play_mode)
-        self.edit_bar.add_widget(self.start_from_edit_btn)
-
-        self.clear_btn = Button(
-            text="Clear",
-            font_size=14,
-            size_hint=(None, None),
-            size=(70, 40),
-            pos_hint={'right': 0.98, 'center_y': 0.5},
-            background_color=(0.8, 0.3, 0.2, 1)
-        )
-        self.clear_btn.bind(on_release=self.clear_environment)
-        self.edit_bar.add_widget(self.clear_btn)
-
-        self.menu_btn = Button(
-            text="Menu",
-            font_size=14,
-            size_hint=(None, None),
-            size=(70, 40),
-            pos_hint={'x': 0.01, 'center_y': 0.5},
-            background_color=(0.5, 0.5, 0.5, 1)
-        )
-        self.menu_btn.bind(on_release=self.show_main_menu)
-        self.edit_bar.add_widget(self.menu_btn)
-
     def _update_bg(self, *args):
         self._bg_rect.pos = self.pos
         self._bg_rect.size = self.size
-
-    def _update_bar_rect(self, *args):
-        self._bar_rect.pos = self.edit_bar.pos
-        self._bar_rect.size = self.edit_bar.size
 
     def _refresh_settings(self):
         g = self.graphics
         self.speed_label.text = f"Speed {g.start_speed}"
         self.sound_btn.text = "Sound: On" if g.sounds.enabled else "Sound: Off"
-        self.maze_btn.text = f"Maze: {g.mode}" + (" (all mazes)" if g.mode == CAMPAIGN else " (endless)")
+        if g.mode == CAMPAIGN:
+            note = " (all mazes)"
+        elif is_custom(g.mode):
+            note = " (your level)"
+        else:
+            note = " (endless)"
+        self.maze_btn.text = f"Maze: {g.mode}{note}"
 
     def _apply_settings(self, speed, mode):
         self.graphics.configure(speed, mode)
@@ -282,38 +232,38 @@ class Menu(RelativeLayout):
         """Switch to Game Play mode."""
         self.save_player_name()
         self.name_input.focus = False
-        self.opacity = 0
-        self.disabled = True
-        if self.edit_bar in self.children:
-            self.remove_widget(self.edit_bar)
-        if self.graphics:
-            self.graphics.edit_mode = False
-            if not self.graphics.started:
-                self.graphics.setup_game()
+        self._hide()
+        if self.parent:
+            self.parent.close_editor()
+        if self.graphics and not self.graphics.started:
+            self.graphics.setup_game()
 
     def start_edit_mode(self, *args):
-        """Switch to Edit Environment mode."""
-        # Hide main menu box and show top edit toolbar
-        if self.menu_box in self.children:
-            self.remove_widget(self.menu_box)
-        if self.edit_bar not in self.children:
-            self.add_widget(self.edit_bar)
+        """Open the Level Editor on the selected custom slot (or the first one)."""
+        self.save_player_name()
+        self.name_input.focus = False
+        self._hide()
+        if self.parent:
+            mode = self.graphics.mode
+            self.parent.open_editor(mode if is_custom(mode) else CUSTOM_SLOTS[0])
 
-        # Allow clicks through to Graphics canvas
-        self.opacity = 1
-        self.disabled = False
-        self._bg_color.a = 0.0  # make background fully transparent so user sees game canvas
+    def play_custom_level(self, slot):
+        """Editor 'Play': select the edited slot as the maze and start it."""
+        self.graphics.configure(self.graphics.start_speed, slot)
+        self._refresh_settings()
+        if self.parent:
+            self.parent.close_editor()
+        self.graphics.setup_game()
+        self._hide()
 
-        if self.graphics:
-            self.graphics.edit_mode = True
-            if self.graphics.start_label and self.graphics.start_label in self.graphics.children:
-                self.graphics.remove_widget(self.graphics.start_label)
-                self.graphics.start_label = None
+    def _hide(self):
+        self.opacity = 0
+        self.disabled = True
 
     def show_main_menu(self, *args):
         """Return to the Main Menu."""
-        if self.edit_bar in self.children:
-            self.remove_widget(self.edit_bar)
+        if self.parent:
+            self.parent.close_editor()
         if self.records_box in self.children:
             self.remove_widget(self.records_box)
         if self.menu_box not in self.children:
@@ -321,15 +271,6 @@ class Menu(RelativeLayout):
 
         self.opacity = 1
         self.disabled = False
-        self._bg_color.a = 0.75
-
-        if self.graphics:
-            self.graphics.edit_mode = False
-
-    def clear_environment(self, *args):
-        if self.graphics:
-            self.graphics.clear_environment()
-
 
     """allowing touch events to pass through the disabled Menu overlay to the underlying Graphics widget"""
     def on_touch_down(self, touch):
@@ -353,8 +294,27 @@ class MainGameWidget(RelativeLayout):
         self.graphics = Graphics()
         self.add_widget(self.graphics)
 
+        # Level Editor sits between the board and the menu; it is only in the tree while open
+        self.editor = LevelEditor(
+            records=self.graphics.records,
+            on_play=lambda slot: self.menu.play_custom_level(slot),
+            on_menu=lambda: self.menu.show_main_menu(),
+            step=self.graphics.step
+        )
+
         self.menu = Menu(graphics_instance=self.graphics)
         self.add_widget(self.menu)
+
+    def open_editor(self, slot):
+        self.graphics.edit_mode = True  # board ignores keys while editing
+        self.editor.open(slot)
+        if self.editor.parent is None:
+            self.add_widget(self.editor, index=1)  # above the board, below the menu
+
+    def close_editor(self):
+        if self.editor.parent is not None:
+            self.remove_widget(self.editor)
+        self.graphics.edit_mode = False
 
 
 # Create the App class

@@ -88,7 +88,12 @@ MAZES = [
     ("Crossroads", _crossroads),
     ("Doorways", _doorways),
 ]
-MAZE_CHOICES = [CAMPAIGN] + [name for name, _ in MAZES]
+CUSTOM_SLOTS = ["Custom 1", "Custom 2", "Custom 3"]  # levels made in the Level Editor
+MAZE_CHOICES = [CAMPAIGN] + [name for name, _ in MAZES] + CUSTOM_SLOTS
+
+
+def is_custom(mode):
+    return mode in CUSTOM_SLOTS
 
 
 def level_name(level):

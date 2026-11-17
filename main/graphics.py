@@ -6,7 +6,6 @@ from kivy.clock import Clock
 from kivy.animation import Animation
 from kivy.lang import Builder
 from kivy.properties import BooleanProperty, NumericProperty
-from kivy.uix.widget import Widget
 from kivy.uix.relativelayout import RelativeLayout
 from kivy.uix.label import Label
 from kivy.uix.button import Button
@@ -14,9 +13,11 @@ from kivy.core.window import Window
 from kivy.graphics import Color, Ellipse, InstructionGroup
 
 from snake import Snake, Square
-from levels import CAMPAIGN, FOODS_PER_LEVEL, MAX_SPEED, MAZE_CHOICES, level_name, maze_walls, speed_interval
+from levels import (CAMPAIGN, FOODS_PER_LEVEL, MAX_SPEED, MAZE_CHOICES, is_custom, level_name, maze_walls,
+                    speed_interval)
 from records import ScoreRecords
 from sounds import Sounds
+from tiles import TILE_COLORS, tile_group
 
 # Load kv file for widget visuals
 try:
@@ -36,21 +37,17 @@ POWER_MOVES = 60
 SLOW_FACTOR = 1.6
 # power-up name -> (food color, effect duration in moves; 0 = instant)
 POWERS = {
-    'slow': ((0.2, 0.6, 1, 0.9), 50),
-    'shrink': ((0.2, 1, 0.9, 0.9), 0),
-    'ghost': ((0.8, 0.4, 1, 0.9), 40),
+    'slow': (TILE_COLORS['slow'], 50),
+    'shrink': (TILE_COLORS['shrink'], 0),
+    'ghost': (TILE_COLORS['ghost'], 40),
 }
 SHRINK_SEGMENTS = 3
-WALL_COLOR = [0.45, 0.3, 0.15]
+WALL_COLOR = list(TILE_COLORS['wall'][:3])
 LEVEL_START_DELAY = 0.7 # ignore keys briefly after a level change so a held key does not start it
+DIRECTION_ANGLES = {(0, 1): 0, (-1, 0): 90, (0, -1): 180, (1, 0): 270}
 
 
-# Create the PaintBrush widget class
-class PaintBrush(Widget):
-    pass
-
-
-# Layout class where the game graphics, snake, obstacles, and food are drawn
+# Layout class where the game graphics, snake, walls, and food are drawn
 class Graphics(RelativeLayout):
     edit_mode = BooleanProperty(False)
     is_paused = BooleanProperty(False)
@@ -93,12 +90,14 @@ class Graphics(RelativeLayout):
         self.snake = None
         self.head = None
         self.snakeTail = []
-        self.obstacles = []  # user-placed in Edit Mode
-        self.walls = []      # level maze
+        self.walls = []      # level maze (built-in or custom)
         self.foods = []
-        self.brushes = []  # stores PaintBrush widgets so Edit Mode can remove/clear them
         self.start_label = None
         self.move_event = None
+
+        # Custom-level decorations, drawn under every widget (added before any child)
+        self.deco_layer = InstructionGroup()
+        self.canvas.add(self.deco_layer)
 
         # Heads-up display with score / level / best
         self.hud = Label(
@@ -134,7 +133,7 @@ class Graphics(RelativeLayout):
         return int(pos[0] // self.step), int(pos[1] // self.step)
 
     def _blocked_cells(self):
-        return {self._cell_of(w.center) for w in self.walls + self.obstacles}
+        return {self._cell_of(w.center) for w in self.walls}
 
     # ---------- game / level setup ----------
 
@@ -186,17 +185,31 @@ class Graphics(RelativeLayout):
             if sq in self.children:
                 self.remove_widget(sq)
 
-        self._build_walls()
+        # Custom levels are rebuilt from their saved data every time, so replays start identical
+        custom = self.records.load_level(self.mode) if is_custom(self.mode) else None
+        cells = custom['cells'] if custom else {}
+        cols, rows = self._grid()
+        if custom:
+            wall_cells = {cell for cell, kind in cells.items() if kind == 'wall'}
+        else:
+            wall_cells = maze_walls(self.maze_name, cols, rows)
+        self._build_walls(wall_cells)
 
-        # Drop generated food; food placed in Edit Mode stays until eaten or cleared
         for food in list(self.foods):
-            if food['kind'] != 'custom':
-                self._remove_food(food)
+            self._remove_food(food)
+        self.deco_layer.clear()
+        for cell, kind in cells.items():
+            if not (0 <= cell[0] < cols and 0 <= cell[1] < rows):
+                continue
+            if kind == 'deco':
+                self.deco_layer.add(tile_group('deco', cell, self.step))
+            elif kind != 'wall':
+                self._spawn_food(self._cell_center(cell), 'normal' if kind == 'food' else kind, timed=False)
 
         # Linked list for snake body (composed of head and tail formed with squares)
         self.snake = Snake(step=self.step)
         self.head = self.snake.head.widget
-        self.head.center, (self.direction, self.head.angle) = self._find_spawn()
+        self.head.center, (self.direction, self.head.angle) = self._find_spawn(custom['start'] if custom else None)
         self.snake.position_initial_tail()
 
         # Attach 2 additional square objects to the snake tail (making 3 squares total)
@@ -228,34 +241,37 @@ class Graphics(RelativeLayout):
             )
             self.add_widget(self.start_label)
 
-    def _build_walls(self):
+    def _build_walls(self, cells):
         for wall in self.walls:
             if wall in self.children:
                 self.remove_widget(wall)
         self.walls = []
-        cols, rows = self._grid()
-        for cell in maze_walls(self.maze_name, cols, rows):
+        for cell in cells:
             # bulge fills the 5px gaps visually; the 20px collision box keeps neighbouring lanes free
             wall = Square(color=WALL_COLOR, show_collision_margin=False, bulge=(self.step - 20) / 2)
             wall.center = self._cell_center(cell)
             self.add_widget(wall)
             self.walls.append(wall)
 
-    def _find_spawn(self):
-        """Pick a cell and orientation with free room for the body behind and a runway ahead."""
-        orientations = [
-            ((0, 1), 0),
-            ((-1, 0), 90),
-            ((0, -1), 180),
-            ((1, 0), 270),
-        ]
+    def _find_spawn(self, preferred=None):
+        """
+        Pick a cell and orientation with free room for the body behind and a runway ahead.
+        `preferred` ((col, row), (dx, dy)) is the editor's start point, used when it is safe.
+        """
+        orientations = list(DIRECTION_ANGLES.items())
         cols, rows = self._grid()
         blocked = self._blocked_cells()
+
+        def is_safe(cell, dx, dy):
+            path = {((cell[0] + dx * k) % cols, (cell[1] + dy * k) % rows) for k in range(-3, 7)}
+            return not path & blocked
+
+        if preferred and preferred[1] in DIRECTION_ANGLES and is_safe(preferred[0], *preferred[1]):
+            return self._cell_center(preferred[0]), (preferred[1], DIRECTION_ANGLES[preferred[1]])
         for _ in range(500):
             cell = (random.randrange(cols), random.randrange(rows))
             (dx, dy), angle = random.choice(orientations)
-            path = {((cell[0] + dx * k) % cols, (cell[1] + dy * k) % rows) for k in range(-3, 7)}
-            if not path & blocked:
+            if is_safe(cell, dx, dy):
                 return self._cell_center(cell), ((dx, dy), angle)
         return self._cell_center((cols // 2, rows // 2)), random.choice(orientations)
 
@@ -302,40 +318,19 @@ class Graphics(RelativeLayout):
             Clock.unschedule(self.speed_boost_event)
             self.speed_boost_event = None
 
-    def clear_environment(self):
-        """Clear all editable environment objects: obstacles, food, and PaintBrush marks."""
-        for obs in list(self.obstacles):
-            if obs in self.children:
-                self.remove_widget(obs)
-        self.obstacles.clear()
-
-        # Remove all PaintBrush widgets created by mouse scrolling in Edit Mode.
-        for brush in list(self.brushes):
-            if brush in self.children:
-                self.remove_widget(brush)
-        self.brushes.clear()
-
-        for food in list(self.foods):
-            self._remove_food(food)
-
     # ---------- food ----------
 
-    def _spawn_food(self, center, kind='normal'):
+    def _spawn_food(self, center, kind='normal', timed=True):
         """
-        Draw a pulsating food circle. kind: 'normal' / 'custom' (red), 'bonus' (gold, timed)
-        or a POWERS name (colored circle with a white core, timed).
+        Draw a pulsating food circle. kind: 'normal' (red), 'bonus' (gold) or a POWERS name
+        (colored circle with a white core). Bonus / power-ups expire unless timed is False (editor-placed).
         """
         cx, cy = center
-        min_size, max_size = (18, 34) if kind != 'normal' and kind != 'custom' else (12, 28)
+        min_size, max_size = (12, 28) if kind == 'normal' else (18, 34)
         min_pos = (cx - min_size / 2.0, cy - min_size / 2.0)
         max_pos = (cx - max_size / 2.0, cy - max_size / 2.0)
 
-        if kind == 'bonus':
-            rgba = (1, 0.8, 0.1, 0.9)
-        elif kind in POWERS:
-            rgba = POWERS[kind][0]
-        else:
-            rgba = (1, 0, 0, 0.45)
+        rgba = TILE_COLORS['food' if kind == 'normal' else kind]
         group = InstructionGroup()
         color = Color(*rgba)
         ellipse = Ellipse(pos=min_pos, size=(min_size, min_size))
@@ -347,7 +342,7 @@ class Graphics(RelativeLayout):
         self.canvas.after.add(group)
 
         # Animate the ellipse size around the same center to create a pulsating effect.
-        duration = 0.5 if kind in ('normal', 'custom') else 0.25
+        duration = 0.5 if kind == 'normal' else 0.25
         anim = (
             Animation(size=(max_size, max_size), pos=max_pos, duration=duration, t='in_out_sine') +
             Animation(size=(min_size, min_size), pos=min_pos, duration=duration, t='in_out_sine')
@@ -356,15 +351,15 @@ class Graphics(RelativeLayout):
         anim.start(ellipse)
 
         food = {'center': (cx, cy), 'group': group, 'color': color, 'ellipse': ellipse, 'kind': kind}
-        if kind == 'bonus':
+        if timed and kind == 'bonus':
             food['moves_left'] = BONUS_MOVES
-        elif kind in POWERS:
+        elif timed and kind in POWERS:
             food['moves_left'] = POWER_MOVES
         self.foods.append(food)
         return food
 
     def _spawn_random_food(self, kind='normal'):
-        """Place food on a random free grid cell (not on walls, obstacles, the snake, or other food)."""
+        """Place food on a random free grid cell (not on walls, the snake, or other food)."""
         cols, rows = self._grid()
         blocked = (self._blocked_cells() |
                    {self._cell_of(node.widget.center) for node in self.snake} |
@@ -380,7 +375,7 @@ class Graphics(RelativeLayout):
             self.foods.remove(food)
 
     def _ensure_food(self):
-        if not any(food['kind'] in ('normal', 'custom') for food in self.foods):
+        if not any(food['kind'] == 'normal' for food in self.foods):
             self._spawn_random_food('normal')
 
     def _tick_timed_food(self):
@@ -512,7 +507,7 @@ class Graphics(RelativeLayout):
         """Check if snake head rectangle overlaps any wall or obstacle square rectangle."""
         if not self.head:
             return False
-        return any(self._widgets_collide(self.head, obs) for obs in self.walls + self.obstacles)
+        return any(self._widgets_collide(self.head, wall) for wall in self.walls)
 
     def check_food_collision(self):
         """Swallow any food the head reaches; the snake grows once the food is digested."""
@@ -536,7 +531,7 @@ class Graphics(RelativeLayout):
             self.snake.swallow()
             if kind == 'bonus':
                 self.sounds.play('bonus')
-                self.score += self.speed_level * (20 + 2 * food['moves_left'])
+                self.score += self.speed_level * (20 + 2 * food.get('moves_left', BONUS_MOVES // 2))
                 continue
 
             self.sounds.play('eat')
@@ -629,115 +624,25 @@ class Graphics(RelativeLayout):
         self._tick_timed_food()
         self.check_food_collision()
 
-    # ---------- edit mode ----------
-
-    def _remove_touch_graphics(self, touch):
-        """Remove editable object under the cursor: obstacle, food, or PaintBrush."""
-        tx, ty = touch.pos
-
-        # Remove PaintBrush triangle near the middle-click position.
-        for brush in list(self.brushes):
-            if abs(brush.center_x - tx) < 25 and abs(brush.center_y - ty) < 25:
-                if brush in self.children:
-                    self.remove_widget(brush)
-                self.brushes.remove(brush)
-
-        # Remove obstacle square near the middle-click position.
-        for obs in list(self.obstacles):
-            if abs(obs.center_x - tx) < 20 and abs(obs.center_y - ty) < 20:
-                if obs in self.children:
-                    self.remove_widget(obs)
-                self.obstacles.remove(obs)
-
-        # Remove food circle near the middle-click position.
-        for food in list(self.foods):
-            cx, cy = food['center']
-            if abs(cx - tx) < 20 and abs(cy - ty) < 20:
-                self._remove_food(food)
-
-    # Handle touch down / mouse click events
-    def on_touch_down(self, touch):
-        # Allow child UI widgets, such as Play Again, to process touch first.
-        if super().on_touch_down(touch):
-            return True
-
-        # Play mode must not place edit objects.
-        if not self.edit_mode:
-            return False
-
-        # Mouse scrolling in Edit Mode: draw PaintBrush little triangles.
-        if touch.is_mouse_scrolling or (hasattr(touch, 'button') and 'scroll' in str(touch.button)):
-            pb = PaintBrush()
-            pb.center = touch.pos
-            self.add_widget(pb)
-            self.brushes.append(pb)  # remember brush widgets so Clear/Middle-click can remove them
-            return True
-
-        # Middle click in Edit Mode: remove objects at the clicked position.
-        if touch.button == 'middle':
-            self._remove_touch_graphics(touch)
-            return True
-
-        # Right click in Edit Mode: place one app-owned pulsating food circle.
-        if touch.button == 'right':
-            self._spawn_food(touch.pos, kind='custom')
-            return True
-
-        # Left click in Edit Mode: place one square obstacle.
-        if touch.button == 'left':
-            re = Square()
-            re.center = touch.pos
-            re.show_collision_margin = True  # show editable obstacle collision boundary
-            self.add_widget(re)
-            self.obstacles.append(re)
-            return True
-
-        return True
-
-    # Handle touch move / mouse drag events
-    def on_touch_move(self, touch):
-        if super().on_touch_move(touch):
-            return True
-
-        # No edit drawing/removing while playing.
-        if not self.edit_mode:
-            return False
-
-        if hasattr(touch, 'button') and touch.button == 'middle':
-            self._remove_touch_graphics(touch)
-            return True
-
-        return True
-
-    # Handle touch up / mouse release events
-    def on_touch_up(self, touch):
-        if super().on_touch_up(touch):
-            return True
-
-        # Do not create food/obstacles on release; creation happens only on touch down.
-        if not self.edit_mode:
-            return False
-
-        return True
-
     # ---------- keyboard ----------
 
     def _menu_visible(self):
+        """True while the menu or the Level Editor owns the keyboard."""
         menu = getattr(self.parent, 'menu', None)
-        return menu is not None and menu.opacity > 0
+        return self.edit_mode or (menu is not None and menu.opacity > 0)
 
     def on_key_down(self, *args):
         key = args[1] if len(args) > 1 else None
         codepoint = args[3] if len(args) > 3 else None
 
-        # ESC in Play Game or Edit Mode: stop gameplay and return to Main Menu.
+        # ESC in Play Game or the Level Editor: stop gameplay and return to Main Menu.
         if key in (27, '27'):
-            self.setup_game()
             if hasattr(self, 'parent') and hasattr(self.parent, 'menu') and self.parent.menu:
                 self.parent.menu.show_main_menu()
+            self.setup_game()
             return
 
-        # While the menu / edit toolbar is shown, keys belong to it (e.g. typing the player name).
+        # While the menu / Level Editor is shown, keys belong to it (e.g. typing the player name).
         if self._menu_visible():
             return
 

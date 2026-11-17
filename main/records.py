@@ -37,6 +37,21 @@ class ScoreRecords:
         settings[key] = value
         self.store.put("settings", **settings)
 
+    def load_level(self, slot):
+        """Custom level from the Level Editor: {'cells': {(col, row): kind}, 'start': ((col, row), (dx, dy)) | None}."""
+        key = f"level:{slot}"
+        data = self.store.get(key) if self.store.exists(key) else {}
+        cells = {(c, r): kind for c, r, kind in data.get("cells", [])}
+        start = data.get("start")
+        return {"cells": cells, "start": ((start[0], start[1]), (start[2], start[3])) if start else None}
+
+    def save_level(self, slot, cells, start):
+        self.store.put(
+            f"level:{slot}",
+            cells=[[c, r, kind] for (c, r), kind in sorted(cells.items())],
+            start=[*start[0], *start[1]] if start else None,
+        )
+
     @property
     def games_played(self):
         return self.store.get("stats")["games_played"] if self.store.exists("stats") else 0
