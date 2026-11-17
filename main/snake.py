@@ -1,14 +1,16 @@
-from importlib import invalidate_caches
-
+from kivy.animation import Animation
 from kivy.properties import BooleanProperty, NumericProperty, ListProperty
 from kivy.uix.widget import Widget
 from kivy.core.window import Window
+
+SWALLOW_BULGE = 4  # extra pixels drawn on each side of a segment carrying swallowed food
 
 
 # Create a square for drawing
 class Square(Widget):
     color = ListProperty([1, 1, 1])
     show_collision_margin = BooleanProperty(True)  # draws exact square collision boundary
+    bulge = NumericProperty(0)  # visual-only enlargement; collision still uses the widget bounds
 
 
 # Create a triangle for drawing
@@ -36,6 +38,7 @@ class Snake:
 
         self.size = 2
         self.step = step
+        self.meals = []  # body index currently carrying each swallowed food (0 = head)
 
         self.color_factor = color_factor
         self.i_color = 1 #color variation it reached
@@ -137,7 +140,7 @@ class Snake:
             (last.widget.center_y + diff_y) % win_h,
         )
 
-    def grow(self, widget=None):
+    def grow(self, widget=None, center=None):
         if widget is None:
             widget = Square()
         node = widget if isinstance(widget, Node) else Node(widget)
@@ -151,8 +154,44 @@ class Snake:
             self.tail = node
             self.size += 1
             self._apply_color(node)
-            self._position_node(node)
+            if center is None:
+                self._position_node(node)
+            else:
+                node.widget.center = center
         return node
+
+    def swallow(self):
+        """Start digesting a food just eaten by the head."""
+        self.meals.append(0)
+
+    def _digest(self, old_tail_center, interval):
+        """
+        Move every swallowed food one segment back along the body and enlarge the segments
+        that carry one. A food that has passed the old tail becomes a new tail segment,
+        placed where the tail was, which is the spot where the food was eaten.
+        """
+        self.meals = [i + 1 for i in self.meals]
+        finished = sum(1 for i in self.meals if i >= self.size)
+        self.meals = [i for i in self.meals if i < self.size]
+
+        carrying = set(self.meals)
+        duration = max(0.05, interval * 0.6)
+        for index, node in enumerate(self):
+            widget = node.widget
+            if not hasattr(widget, 'bulge'):
+                continue
+            target = SWALLOW_BULGE if index in carrying else 0
+            if widget.bulge != target:
+                Animation.cancel_all(widget, 'bulge')
+                Animation(bulge=target, duration=duration, t='out_quad').start(widget)
+
+        new_nodes = []
+        for _ in range(finished):
+            node = self.grow(center=old_tail_center)
+            node.widget.bulge = -node.widget.width / 2  # pop in from nothing
+            Animation(bulge=0, duration=duration, t='out_back').start(node.widget)
+            new_nodes.append(node)
+        return new_nodes
 
     def __len__(self):
         return self.size
@@ -163,13 +202,16 @@ class Snake:
             yield curr
             curr = curr.next
 
-    def update_positions(self, new_head_center):
+    def update_positions(self, new_head_center, interval=0.1):
+        """Advance the body one step; return the nodes grown from fully digested food."""
+        old_tail_center = tuple(self.tail.widget.center)
         curr = self.tail
         while curr and curr.prev:
             curr.widget.center = curr.prev.widget.center
             curr = curr.prev
         if self.head and self.head.widget:
             self.head.widget.center = new_head_center
+        return self._digest(old_tail_center, interval)
 
     @staticmethod
     def _widgets_collide(first, second):

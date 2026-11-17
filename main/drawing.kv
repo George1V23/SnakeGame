@@ -30,9 +30,10 @@
     canvas:
         Color:
             rgb: root.color
+        # bulge only enlarges the drawing (swallow animation, walls); collision keeps self.size
         Rectangle:
-            size: self.size
-            pos: self.x, self.y
+            size: self.width + 2 * root.bulge, self.height + 2 * root.bulge
+            pos: self.x - root.bulge, self.y - root.bulge
 
     # Thin red line around the exact square edges used by collision logic.
     canvas.after:

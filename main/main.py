@@ -3,6 +3,7 @@ from kivy.uix.relativelayout import RelativeLayout
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
 from kivy.uix.button import Button
+from kivy.uix.textinput import TextInput
 
 from kivy.config import Config
 Config.set("input", "mouse", "mouse,disable_multitouch")  # disables Kivy's right/middle-click touch-circle simulator
@@ -29,7 +30,7 @@ class Menu(RelativeLayout):
             orientation='vertical',
             spacing=15,
             size_hint=(None, None),
-            size=(400, 360),
+            size=(400, 470),
             pos_hint={'center_x': 0.5, 'center_y': 0.5}
         )
 
@@ -43,6 +44,20 @@ class Menu(RelativeLayout):
             height=60
         )
         self.menu_box.add_widget(self.title_label)
+
+        # Player name used for the score records
+        name_row = BoxLayout(orientation='horizontal', spacing=10, size_hint=(1, None), height=40)
+        name_row.add_widget(Label(text="Player:", font_size=20, size_hint=(0.3, 1)))
+        self.name_input = TextInput(
+            text=self.graphics.records.player if self.graphics else "Player",
+            font_size=20,
+            multiline=False,
+            write_tab=False,
+            size_hint=(0.7, 1)
+        )
+        self.name_input.bind(on_text_validate=self.save_player_name)
+        name_row.add_widget(self.name_input)
+        self.menu_box.add_widget(name_row)
 
         # Play Game Button
         self.play_btn = Button(
@@ -66,18 +81,66 @@ class Menu(RelativeLayout):
         self.edit_btn.bind(on_release=self.start_edit_mode)
         self.menu_box.add_widget(self.edit_btn)
 
+        # High Scores Button
+        self.records_btn = Button(
+            text="High Scores",
+            font_size=24,
+            size_hint=(1, None),
+            height=50,
+            background_color=(0.8, 0.6, 0.1, 1)
+        )
+        self.records_btn.bind(on_release=self.show_records)
+        self.menu_box.add_widget(self.records_btn)
+
         # Controls description
         self.info_label = Label(
-            text="Controls: WASD / Arrows to move\nPress 'P' to Pause\nEdit Mode: Left Click = Obstacle | Right Click = Food | Middle Click = Remove | Scroll = Paint brush triangles",
+            text="Controls: WASD / Arrows to move (hold to speed up) | 'P' Pause | ESC Menu\n"
+                 "Eat 10 food to clear a level. Gold food is a timed bonus.\n"
+                 "Edit Mode: Left Click = Obstacle | Right Click = Food\nMiddle Click = Remove | Scroll = Paint brush",
             font_size=14,
             halign='center',
             color=(0.8, 0.8, 0.8, 1),
             size_hint=(1, None),
-            height=80
+            height=90
         )
         self.menu_box.add_widget(self.info_label)
 
         self.add_widget(self.menu_box)
+
+        # High score table panel
+        self.records_box = BoxLayout(
+            orientation='vertical',
+            spacing=10,
+            size_hint=(None, None),
+            size=(640, 440),
+            pos_hint={'center_x': 0.5, 'center_y': 0.5}
+        )
+        self.records_box.add_widget(Label(
+            text="HIGH SCORES",
+            font_size=40,
+            bold=True,
+            color=(1, 0.85, 0.2, 1),
+            size_hint=(1, None),
+            height=55
+        ))
+        self.records_table = Label(
+            font_name='RobotoMono-Regular',
+            font_size=16,
+            halign='left',
+            valign='top'
+        )
+        self.records_table.bind(size=self.records_table.setter('text_size'))
+        self.records_box.add_widget(self.records_table)
+        records_back_btn = Button(
+            text="Back",
+            font_size=20,
+            size_hint=(None, None),
+            size=(140, 45),
+            pos_hint={'center_x': 0.5},
+            background_color=(0.5, 0.5, 0.5, 1)
+        )
+        records_back_btn.bind(on_release=self.show_main_menu)
+        self.records_box.add_widget(records_back_btn)
 
         # Edit mode top toolbar overlay
         self.edit_bar = RelativeLayout(
@@ -140,8 +203,32 @@ class Menu(RelativeLayout):
         self._bar_rect.pos = self.edit_bar.pos
         self._bar_rect.size = self.edit_bar.size
 
+    def save_player_name(self, *args):
+        if self.graphics:
+            self.graphics.records.player = self.name_input.text
+            self.name_input.text = self.graphics.records.player
+
+    def show_records(self, *args):
+        """Show the persistent high score table."""
+        self.save_player_name()
+        records = self.graphics.records
+        lines = [f"{'#':>2}  {'NAME':<12} {'SCORE':>6} {'LVL':>3} {'LEN':>4}  DATE", ""]
+        for rank, e in enumerate(records.top(), 1):
+            lines.append(f"{rank:>2}  {e['name']:<12} {e['score']:>6} {e['level']:>3} {e['length']:>4}  {e['date']}")
+        if len(lines) == 2:
+            lines.append("No records yet - go eat something!")
+        lines += ["", f"Games played: {records.games_played}"]
+        self.records_table.text = "\n".join(lines)
+
+        if self.menu_box in self.children:
+            self.remove_widget(self.menu_box)
+        if self.records_box not in self.children:
+            self.add_widget(self.records_box)
+
     def start_play_mode(self, *args):
         """Switch to Game Play mode."""
+        self.save_player_name()
+        self.name_input.focus = False
         self.opacity = 0
         self.disabled = True
         if self.edit_bar in self.children:
@@ -174,6 +261,8 @@ class Menu(RelativeLayout):
         """Return to the Main Menu."""
         if self.edit_bar in self.children:
             self.remove_widget(self.edit_bar)
+        if self.records_box in self.children:
+            self.remove_widget(self.records_box)
         if self.menu_box not in self.children:
             self.add_widget(self.menu_box)
 
