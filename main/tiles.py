@@ -2,24 +2,19 @@ import random
 
 from kivy.graphics import Color, Ellipse, InstructionGroup, Rectangle, Triangle
 
-# Colors shared by the game board and the Level Editor
+# Colors shared by the game board and the Level Editor, chosen to match what each tile does
 TILE_COLORS = {
-    'wall': (0.45, 0.3, 0.15, 1),
-    'food': (1, 0, 0, 0.45),
-    'bonus': (1, 0.8, 0.1, 0.9),
-    'slow': (0.2, 0.6, 1, 0.9),
-    'shrink': (0.2, 1, 0.9, 0.9),
-    'ghost': (0.8, 0.4, 1, 0.9),
-    'deco': (0.9, 0.9, 0.9, 1),  # editor button only; each decoration gets its own color
-    'start': (0.2, 0.9, 0.4, 1),
+    'wall': (0.45, 0.3, 0.15, 1),    # brown brick: blocks the snake
+    'food': (1, 0, 0, 0.45),         # red apple: grow
+    'bonus': (1, 0.8, 0.1, 0.9),     # gold: extra points
+    'slow': (0.2, 0.6, 1, 0.9),      # cold blue: slow motion
+    'shrink': (0.2, 1, 0.9, 0.9),    # cyan: cut the tail
+    'ghost': (0.8, 0.4, 1, 0.9),     # spectral purple: pass through walls
+    'grass': (0.25, 0.65, 0.15, 1),  # green: slows the snake while it crawls through
+    'start': (0.95, 0.95, 0.95, 1),  # white marker: where the snake starts
 }
 POWER_KINDS = ('slow', 'shrink', 'ghost')
-
-
-def deco_color(cell):
-    """Stable 'paint brush' color per cell, so decorations look the same every time they are drawn."""
-    rnd = random.Random(cell[0] * 7919 + cell[1])
-    return rnd.random(), rnd.random(), rnd.random(), 1
+GRASS_BLADES = 6
 
 
 def tile_group(kind, cell, step, direction=(1, 0)):
@@ -30,9 +25,8 @@ def tile_group(kind, cell, step, direction=(1, 0)):
     if kind == 'wall':
         group.add(Color(*TILE_COLORS['wall']))
         group.add(Rectangle(pos=(x, y), size=(step, step)))
-    elif kind == 'deco':
-        group.add(Color(*deco_color(cell)))
-        group.add(Triangle(points=[x + 4, y + 4, x + step - 4, y + 4, cx, y + step - 4]))
+    elif kind == 'grass':
+        _add_grass(group, cell, x, y, step)
     elif kind == 'start':
         # arrow pointing in the snake's starting direction
         dx, dy = direction
@@ -49,3 +43,20 @@ def tile_group(kind, cell, step, direction=(1, 0)):
             group.add(Color(1, 1, 1, 0.9))
             group.add(Ellipse(pos=(cx - 3, cy - 3), size=(6, 6)))
     return group
+
+
+def _add_grass(group, cell, x, y, step):
+    """A soil-green patch with thin leaning blades; seeded per cell so it looks the same on every redraw."""
+    rnd = random.Random(cell[0] * 7919 + cell[1])
+    r, g, b, _ = TILE_COLORS['grass']
+    group.add(Color(r * 0.6, g * 0.6, b * 0.6, 0.55))
+    group.add(Rectangle(pos=(x, y), size=(step, step)))
+    for i in range(GRASS_BLADES):
+        base_x = x + 2 + (step - 4) * (i + rnd.uniform(0.1, 0.9)) / GRASS_BLADES
+        half_width = rnd.uniform(1.0, 1.8)
+        height = rnd.uniform(step * 0.45, step * 0.9)
+        lean = rnd.uniform(-step * 0.18, step * 0.18)
+        shade = rnd.uniform(0.8, 1.25)
+        group.add(Color(min(1, r * shade), min(1, g * shade), min(1, b * shade), 1))
+        group.add(Triangle(points=[base_x - half_width, y + 1, base_x + half_width, y + 1,
+                                   base_x + lean, y + 1 + height]))

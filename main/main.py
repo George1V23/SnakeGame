@@ -40,7 +40,7 @@ class Menu(RelativeLayout):
             orientation='vertical',
             spacing=10,
             size_hint=(None, None),
-            size=(400, 500),
+            size=(400, 520),
             pos_hint={'center_x': 0.5, 'center_y': 0.5}
         )
 
@@ -126,13 +126,14 @@ class Menu(RelativeLayout):
             text="WASD / Arrows move (hold = faster) | P Pause | M Sound | ESC Menu\n"
                  "Campaign: eat 10 food per level. Gold = timed bonus.\n"
                  "Power-ups: [color=3399ff]Slow[/color] | [color=33ffe6]Shrink[/color] | [color=cc66ff]Ghost[/color]\n"
-                 "Editor: Left = paint tool | Right = Food | Middle = Erase | Wheel = tool",
+                 "Editor: Left = paint tool | Right = Food | Middle = Erase | Wheel = tool\n"
+                 "[color=40a626]Grass[/color] slows the snake down",
             markup=True,
             font_size=14,
             halign='center',
             color=(0.8, 0.8, 0.8, 1),
             size_hint=(1, None),
-            height=90
+            height=110
         )
         self.menu_box.add_widget(self.info_label)
 

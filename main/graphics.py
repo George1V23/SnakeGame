@@ -35,6 +35,7 @@ BONUS_MOVES = 40        # timed food lifetimes are counted in snake moves, so pa
 POWER_CHANCE = 0.2      # chance that eating a regular food spawns a power-up
 POWER_MOVES = 60
 SLOW_FACTOR = 1.6
+GRASS_FACTOR = 1.8      # the snake crawls ~1.8x slower while its head is in grass
 # power-up name -> (food color, effect duration in moves; 0 = instant)
 POWERS = {
     'slow': (TILE_COLORS['slow'], 50),
@@ -95,9 +96,11 @@ class Graphics(RelativeLayout):
         self.start_label = None
         self.move_event = None
 
-        # Custom-level decorations, drawn under every widget (added before any child)
-        self.deco_layer = InstructionGroup()
-        self.canvas.add(self.deco_layer)
+        # Custom-level grass, drawn under every widget (added before any child)
+        self.grass_layer = InstructionGroup()
+        self.canvas.add(self.grass_layer)
+        self.grass_cells = set()
+        self.in_grass = False
 
         # Heads-up display with score / level / best
         self.hud = Label(
@@ -173,6 +176,7 @@ class Graphics(RelativeLayout):
         self.foods_eaten = 0
         self.turns = []
         self.effects = {'slow': 0, 'ghost': 0}
+        self.in_grass = False
 
         self.active_key_direction = None
         self._stop_clocks()
@@ -197,12 +201,14 @@ class Graphics(RelativeLayout):
 
         for food in list(self.foods):
             self._remove_food(food)
-        self.deco_layer.clear()
+        self.grass_layer.clear()
+        self.grass_cells = set()
         for cell, kind in cells.items():
             if not (0 <= cell[0] < cols and 0 <= cell[1] < rows):
                 continue
-            if kind == 'deco':
-                self.deco_layer.add(tile_group('deco', cell, self.step))
+            if kind == 'grass':
+                self.grass_layer.add(tile_group('grass', cell, self.step))
+                self.grass_cells.add(cell)
             elif kind != 'wall':
                 self._spawn_food(self._cell_center(cell), 'normal' if kind == 'food' else kind, timed=False)
 
@@ -291,10 +297,13 @@ class Graphics(RelativeLayout):
         return self.start_speed
 
     def _apply_base_speed(self):
-        """Recompute the move interval from the speed level and the slow-motion effect."""
-        self.base_speed = speed_interval(self.speed_level) * (SLOW_FACTOR if self.effects['slow'] else 1)
-        self.max_speed = self.base_speed * BOOST_FACTOR
+        """Recompute the move interval from the speed level, the slow-motion effect and grass."""
+        # judge boosting against the previous interval, before it changes
         boosting = self.active_key_direction is not None and self.current_speed < self.base_speed
+        self.base_speed = (speed_interval(self.speed_level)
+                           * (SLOW_FACTOR if self.effects['slow'] else 1)
+                           * (GRASS_FACTOR if self.in_grass else 1))
+        self.max_speed = self.base_speed * BOOST_FACTOR
         if self.move_event:
             self.set_speed(self.max_speed if boosting else self.base_speed)
         else:
@@ -307,6 +316,8 @@ class Graphics(RelativeLayout):
         else:
             where = f"{self.maze_name}     Food: {self.foods_eaten}"
         effects = "".join(f"     {name.upper()} {left}" for name, left in self.effects.items() if left)
+        if self.in_grass:
+            effects += "     IN GRASS"
         self.hud.text = (f"Score: {self.score}     {where}     Speed {self.speed_level}     "
                          f"Best: {max(self.best, self.score)}{effects}")
 
@@ -619,6 +630,12 @@ class Graphics(RelativeLayout):
         if colliding and not self.effects['ghost']:
             self.end_game()
             return
+
+        # Grass slows the snake while its head is in it
+        in_grass = self._cell_of(self.head.center) in self.grass_cells
+        if in_grass != self.in_grass:
+            self.in_grass = in_grass
+            self._apply_base_speed()
 
         self._tick_effects(colliding)
         self._tick_timed_food()

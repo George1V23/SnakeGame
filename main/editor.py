@@ -18,9 +18,10 @@ TOOLS = [  # (tile kind, button label)
     ('slow', "Slow"),
     ('shrink', "Shrink"),
     ('ghost', "Ghost"),
-    ('deco', "Decor"),
+    ('grass', "Grass"),
     ('start', "Start"),
 ]
+LIGHT_TOOLS = ('bonus', 'shrink', 'start')  # bright buttons that need dark text
 MAX_UNDO = 200
 
 
@@ -78,11 +79,18 @@ class LevelEditor(FloatLayout):
         self.tool_bar = _Bar(pos_hint={'x': 0, 'top': 1})
         self.tool_buttons = {}
         for number, (kind, label) in enumerate(TOOLS, 1):
+            # Flat buttons (no default image) so each shows its tile's real color
             btn = ToggleButton(text=f"{number} {label}", group='editor_tool', allow_no_selection=False,
-                               font_size=14, bold=True, background_color=TILE_COLORS[kind][:3] + (1,))
-            btn.bind(on_release=lambda b, k=kind: self.select_tool(k))
+                               font_size=14, bold=True, background_normal='', background_down='',
+                               border=(0, 0, 0, 0),  # no 9-slice seams on the translucent flat color
+                               color=(0.1, 0.1, 0.1, 1) if kind in LIGHT_TOOLS else (1, 1, 1, 1))
+            btn.bind(on_release=lambda b, k=kind: self.select_tool(k),
+                     pos=self._update_selection, size=self._update_selection)
             self.tool_bar.add_widget(btn)
             self.tool_buttons[kind] = btn
+        with self.tool_bar.canvas.after:
+            Color(1, 1, 1, 1)
+            self._selection = Line(width=2)
 
         # Bottom bar: actions and mouse hints
         self.action_bar = _Bar(pos_hint={'x': 0, 'y': 0})
@@ -182,11 +190,18 @@ class LevelEditor(FloatLayout):
         self.tool = kind
         for k, btn in self.tool_buttons.items():
             btn.state = 'down' if k == kind else 'normal'
-            btn.color = (1, 1, 0.3, 1) if k == kind else (1, 1, 1, 1)
+            # selected tool at full color, the others dimmed
+            btn.background_color = TILE_COLORS[k][:3] + ((1,) if k == kind else (0.55,))
+        self._update_selection()
         self._cursor_color.rgba = TILE_COLORS[kind][:3] + (1,)
         label = dict(TOOLS)[kind]
         self.hint.text = (f"Left: {label}   Right: Food   Middle: Erase\n"
                           f"Wheel / 1-8: tool   Ctrl+Z: undo   Tab: hide bars")
+
+    def _update_selection(self, *args):
+        btn = self.tool_buttons.get(self.tool)
+        if btn is not None:
+            self._selection.rectangle = (btn.x + 1, btn.y + 1, btn.width - 2, btn.height - 2)
 
     def cycle_tool(self, offset):
         kinds = [k for k, _ in TOOLS]

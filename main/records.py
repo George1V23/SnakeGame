@@ -41,7 +41,8 @@ class ScoreRecords:
         """Custom level from the Level Editor: {'cells': {(col, row): kind}, 'start': ((col, row), (dx, dy)) | None}."""
         key = f"level:{slot}"
         data = self.store.get(key) if self.store.exists(key) else {}
-        cells = {(c, r): kind for c, r, kind in data.get("cells", [])}
+        # 'deco' tiles from older saves became grass
+        cells = {(c, r): "grass" if kind == "deco" else kind for c, r, kind in data.get("cells", [])}
         start = data.get("start")
         return {"cells": cells, "start": ((start[0], start[1]), (start[2], start[3])) if start else None}
 
