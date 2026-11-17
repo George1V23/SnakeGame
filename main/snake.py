@@ -164,6 +164,20 @@ class Snake:
         """Start digesting a food just eaten by the head."""
         self.meals.append(0)
 
+    def shrink(self, count, min_size=4):
+        """Cut up to `count` segments off the tail, keeping at least `min_size` nodes; return removed widgets."""
+        removed = []
+        while count > 0 and self.size > min_size:
+            node = self.tail
+            self.tail = node.prev
+            self.tail.next = None
+            node.prev = None
+            self.size -= 1
+            removed.append(node.widget)
+            count -= 1
+        self.meals = [i for i in self.meals if i < self.size]  # food in the cut part is lost
+        return removed
+
     def _digest(self, old_tail_center, interval):
         """
         Move every swallowed food one segment back along the body and enlarge the segments

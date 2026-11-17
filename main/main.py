@@ -1,3 +1,11 @@
+import os
+import sys
+
+# The SDL2 bundled with Kivy can hang forever opening the PulseAudio driver on PipeWire systems;
+# ALSA (routed through PipeWire/Pulse anyway) avoids that. Set before Kivy loads; an explicit env value wins.
+if sys.platform.startswith("linux"):
+    os.environ.setdefault("SDL_AUDIODRIVER", "alsa")
+
 from kivy.app import App
 from kivy.uix.relativelayout import RelativeLayout
 from kivy.uix.boxlayout import BoxLayout
@@ -10,6 +18,7 @@ Config.set("input", "mouse", "mouse,disable_multitouch")  # disables Kivy's righ
 Config.set("kivy", "exit_on_escape", "0")  # prevents ESC from closing the app
 
 from graphics import Graphics
+from levels import CAMPAIGN, MAZE_CHOICES
 
 
 # Menu layout displayed before the game starts
@@ -28,9 +37,9 @@ class Menu(RelativeLayout):
         # Container for main menu elements
         self.menu_box = BoxLayout(
             orientation='vertical',
-            spacing=15,
+            spacing=10,
             size_hint=(None, None),
-            size=(400, 470),
+            size=(400, 500),
             pos_hint={'center_x': 0.5, 'center_y': 0.5}
         )
 
@@ -58,6 +67,25 @@ class Menu(RelativeLayout):
         self.name_input.bind(on_text_validate=self.save_player_name)
         name_row.add_widget(self.name_input)
         self.menu_box.add_widget(name_row)
+
+        # Speed 1-9 (Snake II style) and sound toggle
+        settings_row = BoxLayout(orientation='horizontal', spacing=6, size_hint=(1, None), height=40)
+        slower_btn = Button(text="-", font_size=24, size_hint=(None, 1), width=40)
+        slower_btn.bind(on_release=lambda *a: self.change_speed(-1))
+        self.speed_label = Label(font_size=20, size_hint=(None, 1), width=110)
+        faster_btn = Button(text="+", font_size=24, size_hint=(None, 1), width=40)
+        faster_btn.bind(on_release=lambda *a: self.change_speed(1))
+        self.sound_btn = Button(font_size=18, background_color=(0.4, 0.4, 0.6, 1))
+        self.sound_btn.bind(on_release=self.toggle_sound)
+        for widget in (slower_btn, self.speed_label, faster_btn, self.sound_btn):
+            settings_row.add_widget(widget)
+        self.menu_box.add_widget(settings_row)
+
+        # Maze choice: Campaign (all mazes, level by level) or one maze played endlessly
+        self.maze_btn = Button(font_size=20, size_hint=(1, None), height=40, background_color=(0.5, 0.35, 0.2, 1))
+        self.maze_btn.bind(on_release=self.next_maze)
+        self.menu_box.add_widget(self.maze_btn)
+        self._refresh_settings()
 
         # Play Game Button
         self.play_btn = Button(
@@ -94,9 +122,11 @@ class Menu(RelativeLayout):
 
         # Controls description
         self.info_label = Label(
-            text="Controls: WASD / Arrows to move (hold to speed up) | 'P' Pause | ESC Menu\n"
-                 "Eat 10 food to clear a level. Gold food is a timed bonus.\n"
-                 "Edit Mode: Left Click = Obstacle | Right Click = Food\nMiddle Click = Remove | Scroll = Paint brush",
+            text="WASD / Arrows move (hold = faster) | P Pause | M Sound | ESC Menu\n"
+                 "Campaign: eat 10 food per level. Gold = timed bonus.\n"
+                 "Power-ups: [color=3399ff]Slow[/color] | [color=33ffe6]Shrink[/color] | [color=cc66ff]Ghost[/color]\n"
+                 "Edit Mode: Left = Obstacle | Right = Food | Middle = Remove | Scroll = Brush",
+            markup=True,
             font_size=14,
             halign='center',
             color=(0.8, 0.8, 0.8, 1),
@@ -112,7 +142,7 @@ class Menu(RelativeLayout):
             orientation='vertical',
             spacing=10,
             size_hint=(None, None),
-            size=(640, 440),
+            size=(700, 440),
             pos_hint={'center_x': 0.5, 'center_y': 0.5}
         )
         self.records_box.add_widget(Label(
@@ -125,7 +155,7 @@ class Menu(RelativeLayout):
         ))
         self.records_table = Label(
             font_name='RobotoMono-Regular',
-            font_size=16,
+            font_size=15,
             halign='left',
             valign='top'
         )
@@ -203,6 +233,28 @@ class Menu(RelativeLayout):
         self._bar_rect.pos = self.edit_bar.pos
         self._bar_rect.size = self.edit_bar.size
 
+    def _refresh_settings(self):
+        g = self.graphics
+        self.speed_label.text = f"Speed {g.start_speed}"
+        self.sound_btn.text = "Sound: On" if g.sounds.enabled else "Sound: Off"
+        self.maze_btn.text = f"Maze: {g.mode}" + (" (all mazes)" if g.mode == CAMPAIGN else " (endless)")
+
+    def _apply_settings(self, speed, mode):
+        self.graphics.configure(speed, mode)
+        self.graphics.setup_game()  # rebuild the waiting board with the new maze / speed
+        self._refresh_settings()
+
+    def change_speed(self, delta):
+        self._apply_settings(self.graphics.start_speed + delta, self.graphics.mode)
+
+    def next_maze(self, *args):
+        index = MAZE_CHOICES.index(self.graphics.mode)
+        self._apply_settings(self.graphics.start_speed, MAZE_CHOICES[(index + 1) % len(MAZE_CHOICES)])
+
+    def toggle_sound(self, *args):
+        self.graphics.set_sound(not self.graphics.sounds.enabled)
+        self._refresh_settings()
+
     def save_player_name(self, *args):
         if self.graphics:
             self.graphics.records.player = self.name_input.text
@@ -212,9 +264,10 @@ class Menu(RelativeLayout):
         """Show the persistent high score table."""
         self.save_player_name()
         records = self.graphics.records
-        lines = [f"{'#':>2}  {'NAME':<12} {'SCORE':>6} {'LVL':>3} {'LEN':>4}  DATE", ""]
+        lines = [f"{'#':>2}  {'NAME':<12} {'SCORE':>6}  {'MODE':<11} {'SPD':>3} {'LVL':>3} {'LEN':>4}  DATE", ""]
         for rank, e in enumerate(records.top(), 1):
-            lines.append(f"{rank:>2}  {e['name']:<12} {e['score']:>6} {e['level']:>3} {e['length']:>4}  {e['date']}")
+            lines.append(f"{rank:>2}  {e['name']:<12} {e['score']:>6}  {e.get('mode', CAMPAIGN):<11} "
+                         f"{e.get('speed', '-'):>3} {e['level']:>3} {e['length']:>4}  {e['date']}")
         if len(lines) == 2:
             lines.append("No records yet - go eat something!")
         lines += ["", f"Games played: {records.games_played}"]

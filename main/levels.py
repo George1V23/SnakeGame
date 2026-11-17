@@ -1,10 +1,12 @@
-# Classic-style campaign: each level has a maze layout (wall cells on the snake's grid) and a faster speed.
-# After the last layout the mazes repeat, while the speed keeps increasing up to FASTEST_INTERVAL.
+# Classic-style mazes (wall cells on the snake's grid) and Snake II-style speed levels 1-9.
+# Campaign mode plays the mazes in order, one speed level faster each time; after the last maze they repeat.
+# Single-maze mode is the classic endless game on one maze at a fixed speed.
 
 FOODS_PER_LEVEL = 10
-BASE_INTERVAL = 0.3     # seconds per move on level 1
-FASTEST_INTERVAL = 0.07
-SPEED_FACTOR = 0.88     # each level moves ~12% faster
+MAX_SPEED = 9
+SLOWEST_INTERVAL = 0.32  # seconds per move at speed 1
+SPEED_FACTOR = 0.82      # each speed level moves ~18% faster (speed 9 ~ 0.065s)
+CAMPAIGN = "Campaign"
 
 
 def _hbar(row, c0, c1, gap=0):
@@ -45,31 +47,59 @@ def _doorways(cols, rows):
     return _border(cols, rows, door=3) | _tunnels(cols, rows)
 
 
-def _four_rooms(cols, rows):
+def _apartment(cols, rows):
     """Closed box split by a cross; each inner wall has a passage in the middle of every room side."""
     inner_v = {(cols // 2, r) for r in range(rows) if abs(r - rows // 4) > 1 and abs(r - 3 * rows // 4) > 1}
     inner_h = {(c, rows // 2) for c in range(cols) if abs(c - cols // 4) > 1 and abs(c - 3 * cols // 4) > 1}
     return _border(cols, rows) | inner_v | inner_h
 
 
-LEVELS = [
+def _mill(cols, rows):
+    """Pinwheel of four hooked arms around an open centre (Snake Xenzia's 'Mill')."""
+    cx, cy = cols // 2, rows // 2
+    arm = max(3, rows // 2 - 3)
+    hook = arm // 2
+    base = [(1, k) for k in range(2, arm + 1)] + [(-j, arm) for j in range(1, hook + 1)]
+    cells = set()
+    for dx, dy in base:
+        for _ in range(4):  # rotate each arm cell by 90 degrees around the centre
+            cells.add((cx + dx, cy + dy))
+            dx, dy = -dy, dx
+    return cells
+
+
+def _rails(cols, rows):
+    """Long horizontal rails, alternately open on the right and left, forming a zig-zag track."""
+    spacing = max(3, rows // 6)
+    gap = 5
+    cells = set()
+    for i, r in enumerate(range(spacing, rows - 1, spacing)):
+        cells |= _hbar(r, 0, cols - gap) if i % 2 == 0 else _hbar(r, gap, cols)
+    return cells
+
+
+MAZES = [
     ("Open Field", _open_field),
     ("The Box", _the_box),
     ("Tunnels", _tunnels),
+    ("Mill", _mill),
+    ("Rails", _rails),
+    ("Apartment", _apartment),
     ("Crossroads", _crossroads),
     ("Doorways", _doorways),
-    ("Four Rooms", _four_rooms),
 ]
+MAZE_CHOICES = [CAMPAIGN] + [name for name, _ in MAZES]
 
 
 def level_name(level):
-    return LEVELS[(level - 1) % len(LEVELS)][0]
+    return MAZES[(level - 1) % len(MAZES)][0]
 
 
-def level_walls(level, cols, rows):
-    """Set of (col, row) grid cells occupied by walls on this level."""
-    return LEVELS[(level - 1) % len(LEVELS)][1](cols, rows)
+def maze_walls(name, cols, rows):
+    """Set of (col, row) grid cells occupied by walls in the named maze."""
+    return dict(MAZES)[name](cols, rows)
 
 
-def level_interval(level):
-    return max(FASTEST_INTERVAL, BASE_INTERVAL * SPEED_FACTOR ** (level - 1))
+def speed_interval(speed):
+    """Seconds per move for a speed level 1..MAX_SPEED."""
+    return SLOWEST_INTERVAL * SPEED_FACTOR ** (min(MAX_SPEED, max(1, speed)) - 1)

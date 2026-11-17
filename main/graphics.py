@@ -11,11 +11,12 @@ from kivy.uix.relativelayout import RelativeLayout
 from kivy.uix.label import Label
 from kivy.uix.button import Button
 from kivy.core.window import Window
-from kivy.graphics import Color, Ellipse
+from kivy.graphics import Color, Ellipse, InstructionGroup
 
 from snake import Snake, Square
-from levels import FOODS_PER_LEVEL, level_interval, level_name, level_walls
+from levels import CAMPAIGN, FOODS_PER_LEVEL, MAX_SPEED, MAZE_CHOICES, level_name, maze_walls, speed_interval
 from records import ScoreRecords
+from sounds import Sounds
 
 # Load kv file for widget visuals
 try:
@@ -25,11 +26,21 @@ except FileNotFoundError:
     if os.path.exists(kv_file):
         Builder.load_file(kv_file)
 
-BOOST_INTERVAL = 0.08   # move interval while a direction key is held
-FOOD_POINTS = 10        # per regular food, multiplied by the level
-LEVEL_CLEAR_POINTS = 50 # per level cleared, multiplied by the level
-BONUS_EVERY = 4         # a timed bonus food appears after every 4 regular foods
-BONUS_MOVES = 40        # bonus food lifetime counted in snake moves, so pausing freezes it
+BOOST_FACTOR = 0.4      # holding a direction key moves at 40% of the normal interval
+FOOD_POINTS = 10        # per regular food, multiplied by the speed level (Snake II style)
+LEVEL_CLEAR_POINTS = 50 # per campaign level cleared, multiplied by the level
+BONUS_EVERY = 5         # a timed bonus food appears after every 5 regular foods (as in Snake II)
+BONUS_MOVES = 40        # timed food lifetimes are counted in snake moves, so pausing freezes them
+POWER_CHANCE = 0.2      # chance that eating a regular food spawns a power-up
+POWER_MOVES = 60
+SLOW_FACTOR = 1.6
+# power-up name -> (food color, effect duration in moves; 0 = instant)
+POWERS = {
+    'slow': ((0.2, 0.6, 1, 0.9), 50),
+    'shrink': ((0.2, 1, 0.9, 0.9), 0),
+    'ghost': ((0.8, 0.4, 1, 0.9), 40),
+}
+SHRINK_SEGMENTS = 3
 WALL_COLOR = [0.45, 0.3, 0.15]
 LEVEL_START_DELAY = 0.7 # ignore keys briefly after a level change so a held key does not start it
 
@@ -54,9 +65,18 @@ class Graphics(RelativeLayout):
         # Bind keyboard methods to Window
         Window.bind(on_key_down=self.on_key_down, on_key_up=self.on_key_up)
 
+        self.records = ScoreRecords()
+        self.best = self.records.best
+        self.start_speed = max(1, min(MAX_SPEED, self.records.setting('speed')))
+        self.mode = self.records.setting('maze')  # CAMPAIGN or a single maze name
+        if self.mode not in MAZE_CHOICES:
+            self.mode = CAMPAIGN
+        self.sounds = Sounds(enabled=self.records.setting('sound'))
+        self.effects = {'slow': 0, 'ghost': 0}  # active power-up effects, in moves left
+
         self.step = 25
-        self.base_speed = level_interval(1)
-        self.max_speed = BOOST_INTERVAL
+        self.base_speed = speed_interval(self.start_speed)
+        self.max_speed = self.base_speed * BOOST_FACTOR
         self.current_speed = self.base_speed
         self.active_key_direction = None
         self.speed_boost_event = None
@@ -79,9 +99,6 @@ class Graphics(RelativeLayout):
         self.brushes = []  # stores PaintBrush widgets so Edit Mode can remove/clear them
         self.start_label = None
         self.move_event = None
-
-        self.records = ScoreRecords()
-        self.best = self.records.best
 
         # Heads-up display with score / level / best
         self.hud = Label(
@@ -130,6 +147,17 @@ class Graphics(RelativeLayout):
     def restart_game(self, *args):
         self.setup_game()
 
+    def configure(self, speed, mode):
+        """Apply and save menu settings; takes effect on the next setup_game()."""
+        self.start_speed = max(1, min(MAX_SPEED, speed))
+        self.mode = mode
+        self.records.set_setting('speed', self.start_speed)
+        self.records.set_setting('maze', mode)
+
+    def set_sound(self, enabled):
+        self.sounds.enabled = enabled
+        self.records.set_setting('sound', enabled)
+
     def _prepare_level(self, headline=""):
         """Reset the board and snake for the current level; the score is kept."""
         for widget in (self.start_label, self.game_over_label, self.restart_button, self.pause_label):
@@ -145,12 +173,11 @@ class Graphics(RelativeLayout):
         self.started = False
         self.foods_eaten = 0
         self.turns = []
+        self.effects = {'slow': 0, 'ghost': 0}
 
-        self.base_speed = level_interval(self.level)
-        self.max_speed = min(BOOST_INTERVAL, self.base_speed)
-        self.current_speed = self.base_speed
         self.active_key_direction = None
         self._stop_clocks()
+        self._apply_base_speed()
 
         # Clean up existing snake widgets
         if self.head and self.head in self.children:
@@ -187,7 +214,8 @@ class Graphics(RelativeLayout):
 
         # Prompt label before the level starts (if not in edit mode)
         if not self.edit_mode:
-            text = f"Level {self.level}: {level_name(self.level)}\n[size=28]press any key[/size]"
+            title = f"Level {self.level}: {self.maze_name}" if self.is_campaign else self.maze_name
+            text = f"{title}\n[size=24]Speed {self.speed_level}[/size]\n[size=28]press any key[/size]"
             if headline:
                 text = f"[color=66ff88]{headline}[/color]\n" + text
             self.start_label = Label(
@@ -206,7 +234,7 @@ class Graphics(RelativeLayout):
                 self.remove_widget(wall)
         self.walls = []
         cols, rows = self._grid()
-        for cell in level_walls(self.level, cols, rows):
+        for cell in maze_walls(self.maze_name, cols, rows):
             # bulge fills the 5px gaps visually; the 20px collision box keeps neighbouring lanes free
             wall = Square(color=WALL_COLOR, show_collision_margin=False, bulge=(self.step - 20) / 2)
             wall.center = self._cell_center(cell)
@@ -231,12 +259,40 @@ class Graphics(RelativeLayout):
                 return self._cell_center(cell), ((dx, dy), angle)
         return self._cell_center((cols // 2, rows // 2)), random.choice(orientations)
 
+    @property
+    def is_campaign(self):
+        return self.mode == CAMPAIGN
+
+    @property
+    def maze_name(self):
+        return level_name(self.level) if self.is_campaign else self.mode
+
+    @property
+    def speed_level(self):
+        """Snake II-style speed 1..9; the campaign gets one step faster per level."""
+        if self.is_campaign:
+            return min(MAX_SPEED, self.start_speed + self.level - 1)
+        return self.start_speed
+
+    def _apply_base_speed(self):
+        """Recompute the move interval from the speed level and the slow-motion effect."""
+        self.base_speed = speed_interval(self.speed_level) * (SLOW_FACTOR if self.effects['slow'] else 1)
+        self.max_speed = self.base_speed * BOOST_FACTOR
+        boosting = self.active_key_direction is not None and self.current_speed < self.base_speed
+        if self.move_event:
+            self.set_speed(self.max_speed if boosting else self.base_speed)
+        else:
+            self.current_speed = self.base_speed
+
     def _update_hud(self, *args):
         self.hud.opacity = 0 if self.edit_mode else 1
-        self.hud.text = (
-            f"Score: {self.score}     Level {self.level}: {level_name(self.level)}     "
-            f"Food: {self.foods_eaten}/{FOODS_PER_LEVEL}     Best: {max(self.best, self.score)}"
-        )
+        if self.is_campaign:
+            where = f"Level {self.level}: {self.maze_name}     Food: {self.foods_eaten}/{FOODS_PER_LEVEL}"
+        else:
+            where = f"{self.maze_name}     Food: {self.foods_eaten}"
+        effects = "".join(f"     {name.upper()} {left}" for name, left in self.effects.items() if left)
+        self.hud.text = (f"Score: {self.score}     {where}     Speed {self.speed_level}     "
+                         f"Best: {max(self.best, self.score)}{effects}")
 
     def _stop_clocks(self):
         if self.move_event:
@@ -265,18 +321,33 @@ class Graphics(RelativeLayout):
     # ---------- food ----------
 
     def _spawn_food(self, center, kind='normal'):
-        """Draw a pulsating food circle. kind: 'normal' / 'custom' (red) or 'bonus' (gold, timed)."""
+        """
+        Draw a pulsating food circle. kind: 'normal' / 'custom' (red), 'bonus' (gold, timed)
+        or a POWERS name (colored circle with a white core, timed).
+        """
         cx, cy = center
-        min_size, max_size = (18, 34) if kind == 'bonus' else (12, 28)
+        min_size, max_size = (18, 34) if kind != 'normal' and kind != 'custom' else (12, 28)
         min_pos = (cx - min_size / 2.0, cy - min_size / 2.0)
         max_pos = (cx - max_size / 2.0, cy - max_size / 2.0)
 
-        with self.canvas.after:
-            color = Color(1, 0.8, 0.1, 0.9) if kind == 'bonus' else Color(1, 0, 0, 0.45)
-            ellipse = Ellipse(pos=min_pos, size=(min_size, min_size))
+        if kind == 'bonus':
+            rgba = (1, 0.8, 0.1, 0.9)
+        elif kind in POWERS:
+            rgba = POWERS[kind][0]
+        else:
+            rgba = (1, 0, 0, 0.45)
+        group = InstructionGroup()
+        color = Color(*rgba)
+        ellipse = Ellipse(pos=min_pos, size=(min_size, min_size))
+        group.add(color)
+        group.add(ellipse)
+        if kind in POWERS:
+            group.add(Color(1, 1, 1, 0.9))
+            group.add(Ellipse(pos=(cx - 4, cy - 4), size=(8, 8)))
+        self.canvas.after.add(group)
 
         # Animate the ellipse size around the same center to create a pulsating effect.
-        duration = 0.25 if kind == 'bonus' else 0.5
+        duration = 0.5 if kind in ('normal', 'custom') else 0.25
         anim = (
             Animation(size=(max_size, max_size), pos=max_pos, duration=duration, t='in_out_sine') +
             Animation(size=(min_size, min_size), pos=min_pos, duration=duration, t='in_out_sine')
@@ -284,9 +355,11 @@ class Graphics(RelativeLayout):
         anim.repeat = True
         anim.start(ellipse)
 
-        food = {'center': (cx, cy), 'drawelement': (color, ellipse), 'kind': kind}
+        food = {'center': (cx, cy), 'group': group, 'color': color, 'ellipse': ellipse, 'kind': kind}
         if kind == 'bonus':
             food['moves_left'] = BONUS_MOVES
+        elif kind in POWERS:
+            food['moves_left'] = POWER_MOVES
         self.foods.append(food)
         return food
 
@@ -301,25 +374,55 @@ class Graphics(RelativeLayout):
             self._spawn_food(self._cell_center(random.choice(free)), kind)
 
     def _remove_food(self, food):
-        color, ellipse = food['drawelement']
-        Animation.cancel_all(ellipse)
-        self.canvas.after.remove(color)
-        self.canvas.after.remove(ellipse)
+        Animation.cancel_all(food['ellipse'])
+        self.canvas.after.remove(food['group'])
         if food in self.foods:
             self.foods.remove(food)
 
     def _ensure_food(self):
-        if not any(food['kind'] != 'bonus' for food in self.foods):
+        if not any(food['kind'] in ('normal', 'custom') for food in self.foods):
             self._spawn_random_food('normal')
 
-    def _tick_bonus_food(self):
-        """Count down bonus food lifetime; it blinks before disappearing."""
-        for food in [f for f in self.foods if f['kind'] == 'bonus']:
+    def _tick_timed_food(self):
+        """Count down bonus / power-up lifetimes; they blink before disappearing."""
+        for food in [f for f in self.foods if 'moves_left' in f]:
             food['moves_left'] -= 1
             if food['moves_left'] <= 0:
                 self._remove_food(food)
             elif food['moves_left'] <= 10:
-                food['drawelement'][0].a = 0.9 if food['moves_left'] % 2 else 0.2
+                food['color'].a = 0.9 if food['moves_left'] % 2 else 0.2
+
+    def _activate_power(self, power):
+        if power == 'shrink':
+            for widget in self.snake.shrink(SHRINK_SEGMENTS):
+                if widget in self.children:
+                    self.remove_widget(widget)
+                if widget in self.snakeTail:
+                    self.snakeTail.remove(widget)
+        else:
+            self.effects[power] = POWERS[power][1]
+            if power == 'slow':
+                self._apply_base_speed()
+            elif power == 'ghost':
+                self._set_ghost_look(True)
+        self._update_hud()
+
+    def _tick_effects(self, colliding):
+        """Count down active effects. Ghost never ends while the snake is inside a wall or itself."""
+        for name in self.effects:
+            if not self.effects[name] or (name == 'ghost' and colliding):
+                continue
+            self.effects[name] -= 1
+            if not self.effects[name]:
+                if name == 'slow':
+                    self._apply_base_speed()
+                elif name == 'ghost':
+                    self._set_ghost_look(False)
+        self._update_hud()
+
+    def _set_ghost_look(self, ghost):
+        for node in self.snake:
+            node.widget.opacity = 0.45 if ghost else 1
 
     # ---------- game flow ----------
 
@@ -424,22 +527,34 @@ class Graphics(RelativeLayout):
                 continue
 
             self._remove_food(food)
-            self.snake.swallow()
-            if food['kind'] == 'bonus':
-                self.score += self.level * (20 + 2 * food['moves_left'])
+            kind = food['kind']
+            if kind in POWERS:
+                self.sounds.play('power')
+                self._activate_power(kind)
                 continue
 
-            self.score += FOOD_POINTS * self.level
-            self.foods_eaten += 1
-            if self.foods_eaten % BONUS_EVERY == 0 and not any(f['kind'] == 'bonus' for f in self.foods):
-                self._spawn_random_food('bonus')
+            self.snake.swallow()
+            if kind == 'bonus':
+                self.sounds.play('bonus')
+                self.score += self.speed_level * (20 + 2 * food['moves_left'])
+                continue
 
-        if self.foods_eaten >= FOODS_PER_LEVEL:
+            self.sounds.play('eat')
+            self.score += FOOD_POINTS * self.speed_level
+            self.foods_eaten += 1
+            kinds_on_board = {f['kind'] for f in self.foods}
+            if self.foods_eaten % BONUS_EVERY == 0 and 'bonus' not in kinds_on_board:
+                self._spawn_random_food('bonus')
+            elif random.random() < POWER_CHANCE and not kinds_on_board & POWERS.keys():
+                self._spawn_random_food(random.choice(list(POWERS)))
+
+        if self.is_campaign and self.foods_eaten >= FOODS_PER_LEVEL:
             self.level_complete()
         else:
             self._ensure_food()
 
     def level_complete(self):
+        self.sounds.play('level')
         cleared = self.level
         self.score += LEVEL_CLEAR_POINTS * cleared
         self.level += 1
@@ -452,9 +567,10 @@ class Graphics(RelativeLayout):
             self.remove_widget(self.start_label)
             self.start_label = None
         self._stop_clocks()
+        self.sounds.play('over')
 
         length = len(self.snake) + len(self.snake.meals)  # food still being digested counts
-        rank = self.records.submit(self.score, self.level, length)
+        rank = self.records.submit(self.score, self.level, length, self.mode, self.start_speed)
         self.best = self.records.best
         if rank == 1:
             headline = "NEW HIGH SCORE!"
@@ -464,7 +580,8 @@ class Graphics(RelativeLayout):
             headline = ""
 
         if not self.game_over_label:
-            text = (f"Game Over\n[size=24]Score: {self.score}    Level: {self.level}    "
+            stage = f"Level: {self.level}" if self.is_campaign else self.maze_name
+            text = (f"Game Over\n[size=24]Score: {self.score}    {stage}    Speed: {self.speed_level}    "
                     f"Length: {length}[/size]")
             if headline:
                 text += f"\n[size=30][color=ffd633]{headline}[/color][/size]"
@@ -498,15 +615,18 @@ class Graphics(RelativeLayout):
         new_center_x = (self.head.center_x + self.direction[0] * self.step) % win_w
         new_center_y = (self.head.center_y + self.direction[1] * self.step) % win_h
         for node in self.snake.update_positions((new_center_x, new_center_y), self.current_speed):
+            node.widget.opacity = 0.45 if self.effects['ghost'] else 1
             self.snakeTail.append(node.widget)
             self.add_widget(node.widget)
 
-        # Check self collision, then walls/obstacles
-        if self.snake.check_collision() or self.check_obstacle_collision():
+        # Check self collision, then walls/obstacles (a ghost snake passes through both)
+        colliding = self.snake.check_collision() or self.check_obstacle_collision()
+        if colliding and not self.effects['ghost']:
             self.end_game()
             return
 
-        self._tick_bonus_food()
+        self._tick_effects(colliding)
+        self._tick_timed_food()
         self.check_food_collision()
 
     # ---------- edit mode ----------
@@ -623,6 +743,10 @@ class Graphics(RelativeLayout):
 
         if codepoint in ('p', 'P') or key in (112, '112'):
             self.toggle_pause()
+            return
+
+        if codepoint in ('m', 'M') or key in (109, '109'):
+            self.set_sound(not self.sounds.enabled)
             return
 
         if self.game_over or self.is_paused:
