@@ -1,9 +1,9 @@
 from kivy.animation import Animation
 from kivy.properties import BooleanProperty, NumericProperty, ListProperty
 from kivy.uix.widget import Widget
-from kivy.core.window import Window
+from scale import STEP, UI_SCALE, field_size
 
-SWALLOW_BULGE = 4  # extra pixels drawn on each side of a segment carrying swallowed food
+SWALLOW_BULGE = 4 * UI_SCALE  # extra pixels drawn on each side of a segment carrying swallowed food
 
 
 # Create a square for drawing
@@ -30,7 +30,7 @@ class Node:
 
 # Linked list class representing the snake's body
 class Snake:
-    def __init__(self, color_factor=0.85, step=25):
+    def __init__(self, color_factor=0.85, step=STEP):
         self.head = Node(Triangle())
         self.tail = Node(Square())
         self.head.next = self.tail
@@ -93,8 +93,7 @@ class Snake:
             return
         angle = getattr(self.head.widget, 'angle', 0)
         dir_x, dir_y = self._angle_to_direction(angle)
-        win_w = Window.width if Window else 800
-        win_h = Window.height if Window else 600
+        win_w, win_h = field_size()
         self.tail.widget.center = (
             (self.head.widget.center_x - dir_x * self.step) % win_w,
             (self.head.widget.center_y - dir_y * self.step) % win_h,
@@ -105,8 +104,7 @@ class Snake:
             return
         last = node.prev
         prev = last.prev
-        win_w = Window.width if Window else 800
-        win_h = Window.height if Window else 600
+        win_w, win_h = field_size()
 
         if prev and prev.widget:
             diff_x = last.widget.center_x - prev.widget.center_x

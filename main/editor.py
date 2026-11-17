@@ -5,12 +5,14 @@ from kivy.uix.button import Button
 from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.label import Label
 from kivy.uix.togglebutton import ToggleButton
+from kivy.metrics import dp, sp
 
 from levels import CUSTOM_SLOTS, MAZES, maze_walls
+from scale import IS_TOUCH, field_size
 from tiles import TILE_COLORS, tile_group
 
 BOARD_COLOR = (0.2, 0.5, 0.5, 1)  # same as the game board in drawing.kv
-BAR_HEIGHT = 34
+BAR_HEIGHT = dp(34)
 TOOLS = [  # (tile kind, button label)
     ('wall', "Wall"),
     ('food', "Food"),
@@ -20,15 +22,16 @@ TOOLS = [  # (tile kind, button label)
     ('ghost', "Ghost"),
     ('grass', "Grass"),
     ('start', "Start"),
+    ('erase', "Erase"),  # touch screens have no middle click
 ]
-LIGHT_TOOLS = ('bonus', 'shrink', 'start')  # bright buttons that need dark text
+LIGHT_TOOLS = ('bonus', 'shrink', 'start', 'erase')  # bright buttons that need dark text
 MAX_UNDO = 200
 
 
 # Bar with a dark translucent background
 class _Bar(BoxLayout):
     def __init__(self, **kwargs):
-        super().__init__(orientation='horizontal', spacing=3, padding=2,
+        super().__init__(orientation='horizontal', spacing=dp(3), padding=dp(2),
                          size_hint=(1, None), height=BAR_HEIGHT, **kwargs)
         with self.canvas.before:
             Color(0, 0, 0, 0.7)
@@ -44,7 +47,8 @@ class _Bar(BoxLayout):
 class LevelEditor(FloatLayout):
     """
     Mouse: left = paint the selected tool (drag to paint walls), right = food, middle = erase (drag),
-    wheel = change tool. Keys: 1-8 tools, Ctrl+Z undo, Tab hide/show the bars.
+    wheel = change tool. Keys: 1-9 tools, Ctrl+Z undo, Tab hide/show the bars.
+    Touch: tap / drag paints the selected tool (Erase tool to remove); Hide / Show buttons for the bars.
     """
 
     def __init__(self, records, on_play, on_menu, step=25, **kwargs):
@@ -81,7 +85,7 @@ class LevelEditor(FloatLayout):
         for number, (kind, label) in enumerate(TOOLS, 1):
             # Flat buttons (no default image) so each shows its tile's real color
             btn = ToggleButton(text=f"{number} {label}", group='editor_tool', allow_no_selection=False,
-                               font_size=14, bold=True, background_normal='', background_down='',
+                               font_size=sp(13), bold=True, background_normal='', background_down='',
                                border=(0, 0, 0, 0),  # no 9-slice seams on the translucent flat color
                                color=(0.1, 0.1, 0.1, 1) if kind in LIGHT_TOOLS else (1, 1, 1, 1))
             btn.bind(on_release=lambda b, k=kind: self.select_tool(k),
@@ -90,17 +94,18 @@ class LevelEditor(FloatLayout):
             self.tool_buttons[kind] = btn
         with self.tool_bar.canvas.after:
             Color(1, 1, 1, 1)
-            self._selection = Line(width=2)
+            self._selection = Line(width=dp(2))
 
         # Bottom bar: actions and mouse hints
         self.action_bar = _Bar(pos_hint={'x': 0, 'y': 0})
         self.slot_btn = self._action("", self.next_slot, (0.3, 0.3, 0.6, 1), 95)
-        self.template_btn = self._action("", self.apply_next_template, (0.5, 0.35, 0.2, 1), 150)
-        self._action("Undo", self.undo, (0.4, 0.4, 0.4, 1), 60)
-        self._action("Clear", self.clear, (0.8, 0.3, 0.2, 1), 60)
-        self._action("Play", lambda *a: self.on_play(self.slot), (0.2, 0.75, 0.3, 1), 60)
-        self._action("Menu", lambda *a: self.on_menu(), (0.5, 0.5, 0.5, 1), 60)
-        self.hint = Label(font_size=11, halign='left', valign='middle', color=(1, 1, 0.6, 1))
+        self.template_btn = self._action("", self.apply_next_template, (0.5, 0.35, 0.2, 1), 140)
+        self._action("Undo", self.undo, (0.4, 0.4, 0.4, 1), 55)
+        self._action("Clear", self.clear, (0.8, 0.3, 0.2, 1), 55)
+        self._action("Hide", self.toggle_bars, (0.3, 0.3, 0.3, 1), 50)
+        self._action("Play", lambda *a: self.on_play(self.slot), (0.2, 0.75, 0.3, 1), 55)
+        self._action("Menu", lambda *a: self.on_menu(), (0.5, 0.5, 0.5, 1), 55)
+        self.hint = Label(font_size=sp(10), halign='left', valign='middle', color=(1, 1, 0.6, 1))
         self.hint.bind(size=self.hint.setter('text_size'))
         self.action_bar.add_widget(self.hint)
 
@@ -108,11 +113,17 @@ class LevelEditor(FloatLayout):
         self.add_widget(self.action_bar)
         self.template_btn.text = f"Maze: {MAZES[self.template_index][0]}"
 
+        # Small corner button to bring the bars back after "Hide" (touch screens have no Tab key)
+        self.show_bars_btn = Button(text="Show bars", font_size=sp(12), size_hint=(None, None),
+                                    size=(dp(80), dp(28)), pos_hint={'x': 0, 'top': 1},
+                                    background_color=(0.2, 0.2, 0.2, 0.8))
+        self.show_bars_btn.bind(on_release=lambda *a: self.toggle_bars())
+
         Window.bind(mouse_pos=self._on_mouse_pos, on_key_down=self._on_key_down)
         self.select_tool('wall')
 
     def _action(self, text, callback, color, width):
-        btn = Button(text=text, font_size=13, size_hint=(None, 1), width=width, background_color=color)
+        btn = Button(text=text, font_size=sp(13), size_hint=(None, 1), width=dp(width), background_color=color)
         btn.bind(on_release=lambda *a: callback())
         self.action_bar.add_widget(btn)
         return btn
@@ -143,8 +154,9 @@ class LevelEditor(FloatLayout):
     # ---------- drawing ----------
 
     def _grid_size(self):
-        # Window based, like the game board, so edited cells map 1:1 onto the playfield
-        return max(1, int(Window.width // self.step)), max(1, int(Window.height // self.step))
+        # Same whole-cell playfield as the game board, so edited cells map 1:1 onto it
+        width, height = field_size()
+        return int(width // self.step), int(height // self.step)
 
     def _draw_board(self, *args):
         self._bg.pos = self.pos
@@ -195,8 +207,11 @@ class LevelEditor(FloatLayout):
         self._update_selection()
         self._cursor_color.rgba = TILE_COLORS[kind][:3] + (1,)
         label = dict(TOOLS)[kind]
-        self.hint.text = (f"Left: {label}   Right: Food   Middle: Erase\n"
-                          f"Wheel / 1-8: tool   Ctrl+Z: undo   Tab: hide bars")
+        if IS_TOUCH:
+            self.hint.text = f"Tap / drag: {label}\nStart: tap again to turn"
+        else:
+            self.hint.text = (f"Left: {label}   Right: Food   Middle: Erase\n"
+                              f"Wheel / 1-9: tool   Ctrl+Z: undo   Tab: hide bars")
 
     def _update_selection(self, *args):
         btn = self.tool_buttons.get(self.tool)
@@ -294,8 +309,22 @@ class LevelEditor(FloatLayout):
 
     # ---------- input ----------
 
+    def toggle_bars(self):
+        """Hide the tool / action bars to paint the cells beneath them, or show them again."""
+        hidden = self.tool_bar.parent is None
+        for bar in (self.tool_bar, self.action_bar):
+            if hidden:
+                self.add_widget(bar)
+            else:
+                self.remove_widget(bar)
+        if hidden:
+            self.remove_widget(self.show_bars_btn)
+        else:
+            self.add_widget(self.show_bars_btn)
+
     def _bars_hit(self, pos):
-        return any(bar.parent is self and bar.collide_point(*pos) for bar in (self.tool_bar, self.action_bar))
+        return any(w.parent is self and w.collide_point(*pos)
+                   for w in (self.tool_bar, self.action_bar, self.show_bars_btn))
 
     def on_touch_down(self, touch):
         if super().on_touch_down(touch) or self._bars_hit(touch.pos):
@@ -336,11 +365,7 @@ class LevelEditor(FloatLayout):
             self.undo()
             return True
         if key == 9:  # Tab toggles the bars to reach the cells beneath them
-            for bar in (self.tool_bar, self.action_bar):
-                if bar.parent is self:
-                    self.remove_widget(bar)
-                else:
-                    self.add_widget(bar)
+            self.toggle_bars()
             return True
         if codepoint and codepoint.isdigit() and 1 <= int(codepoint) <= len(TOOLS):
             self.select_tool(TOOLS[int(codepoint) - 1][0])

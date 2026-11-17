@@ -1,6 +1,7 @@
 #for assigning random color to the brush
 #: import rnd random
-#: import Window kivy.core.window.Window
+#: import UI_SCALE scale.UI_SCALE
+#: import field_size scale.field_size
 
 # Drawing pad / Graphics creation
 <Graphics>:
@@ -14,7 +15,7 @@
 # Square widget coding
 <Square>:
     size_hint: None, None
-    size: 20, 20
+    size: 20 * UI_SCALE, 20 * UI_SCALE
     canvas:
         Color:
             rgb: root.color
@@ -28,7 +29,7 @@
         Color:
             rgba: 1, 0, 0, 1 if root.show_collision_margin else 0
         Line:
-            width: 1
+            width: UI_SCALE
             rectangle: self.x, self.y, self.width, self.height
 
 # Triangle widget coding
@@ -36,7 +37,7 @@
     angle: 0
     color: [rnd.random(), rnd.random(), rnd.random()]
     size_hint: None, None
-    size: 30, 30
+    size: 30 * UI_SCALE, 30 * UI_SCALE
     canvas:
         # 1. Primary instance
         PushMatrix
@@ -62,7 +63,7 @@
         # 2. Wrapped horizontal instance
         PushMatrix
         Translate:
-            xy: self.x - Window.width, self.y
+            xy: self.x - field_size()[0], self.y
         Rotate:
             angle: root.angle
             origin: self.width / 2, self.height / 2
@@ -83,7 +84,7 @@
         # 3. Wrapped vertical instance
         PushMatrix
         Translate:
-            xy: self.x, self.y - Window.height
+            xy: self.x, self.y - field_size()[1]
         Rotate:
             angle: root.angle
             origin: self.width / 2, self.height / 2
@@ -106,5 +107,5 @@
         Color:
             rgba: 1, 0, 0, 1 if root.show_collision_margin else 0
         Line:
-            width: 1
+            width: UI_SCALE
             rectangle: self.x, self.y, self.width, self.height

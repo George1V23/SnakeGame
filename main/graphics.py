@@ -6,11 +6,13 @@ from kivy.clock import Clock
 from kivy.animation import Animation
 from kivy.lang import Builder
 from kivy.properties import BooleanProperty, NumericProperty
+from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.relativelayout import RelativeLayout
 from kivy.uix.label import Label
 from kivy.uix.button import Button
 from kivy.core.window import Window
 from kivy.graphics import Color, Ellipse, InstructionGroup
+from kivy.metrics import dp, sp
 
 from snake import Snake, Square
 from levels import (CAMPAIGN, FOODS_PER_LEVEL, MAX_SPEED, MAZE_CHOICES, is_custom, level_name, maze_walls,
@@ -18,6 +20,8 @@ from levels import (CAMPAIGN, FOODS_PER_LEVEL, MAX_SPEED, MAZE_CHOICES, is_custo
 from records import ScoreRecords
 from sounds import Sounds
 from tiles import TILE_COLORS, tile_group
+from scale import IS_TOUCH, STEP, UI_SCALE, field_size
+from touch import DPad
 
 # Load kv file for widget visuals
 try:
@@ -46,6 +50,8 @@ SHRINK_SEGMENTS = 3
 WALL_COLOR = list(TILE_COLORS['wall'][:3])
 LEVEL_START_DELAY = 0.7 # ignore keys briefly after a level change so a held key does not start it
 DIRECTION_ANGLES = {(0, 1): 0, (-1, 0): 90, (0, -1): 180, (1, 0): 270}
+SWIPE_DISTANCE = dp(30) # finger travel that counts as a swipe
+HOLD_TIME = 0.3         # seconds a finger rests on the board before the snake speeds up
 
 
 # Layout class where the game graphics, snake, walls, and food are drawn
@@ -72,7 +78,7 @@ class Graphics(RelativeLayout):
         self.sounds = Sounds(enabled=self.records.setting('sound'))
         self.effects = {'slow': 0, 'ghost': 0}  # active power-up effects, in moves left
 
-        self.step = 25
+        self.step = STEP
         self.base_speed = speed_interval(self.start_speed)
         self.max_speed = self.base_speed * BOOST_FACTOR
         self.current_speed = self.base_speed
@@ -104,30 +110,42 @@ class Graphics(RelativeLayout):
 
         # Heads-up display with score / level / best
         self.hud = Label(
-            font_size=18,
+            font_size=sp(16) if IS_TOUCH else sp(18),
             bold=True,
             color=(1, 1, 1, 0.9),
-            size_hint=(1, None),
-            height=30,
-            pos_hint={'x': 0, 'top': 1}
+            size_hint=(0.78 if IS_TOUCH else 1, None),  # leave room for the touch buttons
+            height=dp(30),
+            pos_hint={'x': 0, 'top': 1},
+            shorten=True
         )
+        self.hud.bind(size=self.hud.setter('text_size'))
         self.add_widget(self.hud)
         self.bind(score=self._update_hud, level=self._update_hud, foods_eaten=self._update_hud,
                   best=self._update_hud, edit_mode=self._update_hud)
+
+        # Touch screens: Pause / Sound buttons and an optional D-pad (swipes always work)
+        self.touch_widgets = []
+        self.dpad = DPad(self.handle_direction, self.release_direction, pos_hint={'x': 0.01, 'y': 0.02})
+        if IS_TOUCH:
+            self.touch_bar = BoxLayout(size_hint=(None, None), size=(dp(170), dp(30)), spacing=dp(4),
+                                       pos_hint={'right': 0.995, 'top': 0.995})
+            pause_btn = Button(text="Pause", font_size=sp(14), background_color=(0.4, 0.4, 0.4, 0.8))
+            pause_btn.bind(on_release=lambda b: self.toggle_pause())
+            self.sound_btn = Button(font_size=sp(14), background_color=(0.4, 0.4, 0.6, 0.8))
+            self.sound_btn.bind(on_release=self._on_sound_button)
+            self.touch_bar.add_widget(pause_btn)
+            self.touch_bar.add_widget(self.sound_btn)
+            self.touch_widgets.append(self.touch_bar)
+            self._update_sound_button()
+        self.set_dpad(self.records.setting('dpad'))
 
         self.setup_game()
 
     # ---------- grid helpers ----------
 
-    @staticmethod
-    def _window_size():
-        win_w = Window.width if Window and Window.width > 0 else 800
-        win_h = Window.height if Window and Window.height > 0 else 600
-        return win_w, win_h
-
     def _grid(self):
-        win_w, win_h = self._window_size()
-        return max(1, int(win_w // self.step)), max(1, int(win_h // self.step))
+        win_w, win_h = field_size()
+        return int(win_w // self.step), int(win_h // self.step)
 
     def _cell_center(self, cell):
         return (cell[0] + 0.5) * self.step, (cell[1] + 0.5) * self.step
@@ -159,6 +177,30 @@ class Graphics(RelativeLayout):
     def set_sound(self, enabled):
         self.sounds.enabled = enabled
         self.records.set_setting('sound', enabled)
+        self._update_sound_button()
+
+    def _update_sound_button(self):
+        if IS_TOUCH:
+            self.sound_btn.text = "Sound: On" if self.sounds.enabled else "Sound: Off"
+
+    def set_dpad(self, enabled):
+        """Show or hide the on-screen D-pad (saved setting)."""
+        self.records.set_setting('dpad', enabled)
+        self.use_dpad = enabled
+        if enabled and self.dpad not in self.touch_widgets:
+            self.touch_widgets.append(self.dpad)
+        elif not enabled and self.dpad in self.touch_widgets:
+            self.touch_widgets.remove(self.dpad)
+            if self.dpad.parent:
+                self.remove_widget(self.dpad)
+        self._raise_overlays()
+
+    def _raise_overlays(self):
+        """Keep the HUD and touch controls drawn above the board."""
+        for widget in [self.hud] + self.touch_widgets:
+            if widget.parent:
+                self.remove_widget(widget)
+            self.add_widget(widget)
 
     def _prepare_level(self, headline=""):
         """Reset the board and snake for the current level; the score is kept."""
@@ -226,22 +268,21 @@ class Graphics(RelativeLayout):
             self.add_widget(sq)
         self.add_widget(self.head)
 
-        # Keep the HUD drawn above the board
-        self.remove_widget(self.hud)
-        self.add_widget(self.hud)
+        self._raise_overlays()
         self._update_hud()
 
         # Prompt label before the level starts (if not in edit mode)
         if not self.edit_mode:
             title = f"Level {self.level}: {self.maze_name}" if self.is_campaign else self.maze_name
-            text = f"{title}\n[size=24]Speed {self.speed_level}[/size]\n[size=28]press any key[/size]"
+            start_hint = "tap or swipe to start" if IS_TOUCH else "press any key"
+            text = f"{title}\n[size={int(sp(24))}]Speed {self.speed_level}[/size]\n[size={int(sp(28))}]{start_hint}[/size]"
             if headline:
                 text = f"[color=66ff88]{headline}[/color]\n" + text
             self.start_label = Label(
                 text=text,
                 markup=True,
                 halign='center',
-                font_size=40,
+                font_size=sp(40),
                 color=(1, 1, 1, 1),
                 pos_hint={'center_x': 0.5, 'center_y': 0.5}
             )
@@ -254,7 +295,7 @@ class Graphics(RelativeLayout):
         self.walls = []
         for cell in cells:
             # bulge fills the 5px gaps visually; the 20px collision box keeps neighbouring lanes free
-            wall = Square(color=WALL_COLOR, show_collision_margin=False, bulge=(self.step - 20) / 2)
+            wall = Square(color=WALL_COLOR, show_collision_margin=False, bulge=(self.step - 20 * UI_SCALE) / 2)
             wall.center = self._cell_center(cell)
             self.add_widget(wall)
             self.walls.append(wall)
@@ -338,6 +379,7 @@ class Graphics(RelativeLayout):
         """
         cx, cy = center
         min_size, max_size = (12, 28) if kind == 'normal' else (18, 34)
+        min_size, max_size = min_size * UI_SCALE, max_size * UI_SCALE
         min_pos = (cx - min_size / 2.0, cy - min_size / 2.0)
         max_pos = (cx - max_size / 2.0, cy - max_size / 2.0)
 
@@ -349,7 +391,8 @@ class Graphics(RelativeLayout):
         group.add(ellipse)
         if kind in POWERS:
             group.add(Color(1, 1, 1, 0.9))
-            group.add(Ellipse(pos=(cx - 4, cy - 4), size=(8, 8)))
+            core = 4 * UI_SCALE
+            group.add(Ellipse(pos=(cx - core, cy - core), size=(core * 2, core * 2)))
         self.canvas.after.add(group)
 
         # Animate the ellipse size around the same center to create a pulsating effect.
@@ -444,7 +487,7 @@ class Graphics(RelativeLayout):
             if not self.pause_label:
                 self.pause_label = Label(
                     text="PAUSED\nPress 'P' to resume",
-                    font_size=36,
+                    font_size=sp(36),
                     color=(1, 1, 0, 1),
                     halign='center',
                     pos_hint={'center_x': 0.5, 'center_y': 0.5}
@@ -587,16 +630,16 @@ class Graphics(RelativeLayout):
 
         if not self.game_over_label:
             stage = f"Level: {self.level}" if self.is_campaign else self.maze_name
-            text = (f"Game Over\n[size=24]Score: {self.score}    {stage}    Speed: {self.speed_level}    "
+            text = (f"Game Over\n[size={int(sp(24))}]Score: {self.score}    {stage}    Speed: {self.speed_level}    "
                     f"Length: {length}[/size]")
             if headline:
-                text += f"\n[size=30][color=ffd633]{headline}[/color][/size]"
-            text += "\n[size=16]ESC: menu[/size]"
+                text += f"\n[size={int(sp(30))}][color=ffd633]{headline}[/color][/size]"
+            text += f"\n[size={int(sp(16))}]{'Back' if IS_TOUCH else 'ESC'}: menu[/size]"
             self.game_over_label = Label(
                 text=text,
                 markup=True,
                 halign='center',
-                font_size=50,
+                font_size=sp(50),
                 color=(1, 0, 0, 1),
                 pos_hint={'center_x': 0.5, 'center_y': 0.5}
             )
@@ -604,9 +647,9 @@ class Graphics(RelativeLayout):
         if not self.restart_button:
             self.restart_button = Button(
                 text="Play Again",
-                font_size=20,
+                font_size=sp(20),
                 size_hint=(None, None),
-                size=(150, 50),
+                size=(dp(150), dp(50)),
                 pos_hint={'right': 1, 'y': 0}
             )
             self.restart_button.bind(on_release=self.restart_game)
@@ -617,7 +660,7 @@ class Graphics(RelativeLayout):
             return
         if self.turns:
             self.set_direction(self.turns.pop(0))
-        win_w, win_h = self._window_size()
+        win_w, win_h = field_size()
         new_center_x = (self.head.center_x + self.direction[0] * self.step) % win_w
         new_center_y = (self.head.center_y + self.direction[1] * self.step) % win_h
         for node in self.snake.update_positions((new_center_x, new_center_y), self.current_speed):
@@ -671,11 +714,17 @@ class Graphics(RelativeLayout):
             self.set_sound(not self.sounds.enabled)
             return
 
-        if self.game_over or self.is_paused:
-            return
-
         move = keyboard_handler(*args)
-        if move == (0, 0):
+        if move != (0, 0):
+            self.handle_direction(move)
+
+    def on_key_up(self, *args):
+        if keyboard_handler(*args) != (0, 0):
+            self.release_direction()
+
+    def handle_direction(self, move):
+        """A direction pressed (key, swipe or D-pad): start the level, queue a turn, and boost if held."""
+        if self.game_over or self.is_paused or self._menu_visible():
             return
 
         if not self.started:
@@ -701,16 +750,63 @@ class Graphics(RelativeLayout):
                 Clock.unschedule(self.speed_boost_event)
             self.speed_boost_event = Clock.schedule_once(self._boost_speed, 0.25)
 
-    def on_key_up(self, *args):
+    def release_direction(self):
+        """The direction key / D-pad button was let go: stop boosting."""
         if self.game_over or self.is_paused or self._menu_visible():
             return
-        move = keyboard_handler(*args)
-        if move == self.active_key_direction or move != (0, 0):
-            self.active_key_direction = None
-            if self.speed_boost_event:
-                Clock.unschedule(self.speed_boost_event)
-                self.speed_boost_event = None
+        self.active_key_direction = None
+        if self.speed_boost_event:
+            Clock.unschedule(self.speed_boost_event)
+            self.speed_boost_event = None
+        self.set_speed(self.base_speed)
+
+    # ---------- touch controls ----------
+
+    def on_touch_down(self, touch):
+        # On-screen buttons (Play Again, Pause, Sound, D-pad) get the touch first
+        if super().on_touch_down(touch):
+            return True
+        if self.edit_mode or self._menu_visible() or touch.is_mouse_scrolling:
+            return False
+        touch.ud['swipe_from'] = touch.pos
+        touch.ud['swiped'] = False
+        touch.ud['hold'] = Clock.schedule_once(lambda dt: self._touch_hold(touch), HOLD_TIME)
+        return True
+
+    def on_touch_move(self, touch):
+        if 'swipe_from' not in touch.ud:
+            return super().on_touch_move(touch)
+        start_x, start_y = touch.ud['swipe_from']
+        dx, dy = touch.x - start_x, touch.y - start_y
+        if max(abs(dx), abs(dy)) < SWIPE_DISTANCE:
+            return True
+        move = ((1 if dx > 0 else -1), 0) if abs(dx) > abs(dy) else (0, (1 if dy > 0 else -1))
+        # Restart measuring from here, so one finger can chain several turns without lifting
+        touch.ud['swipe_from'] = touch.pos
+        touch.ud['swiped'] = True
+        touch.ud['hold'].cancel()
+        self.handle_direction(move)
+        self.release_direction()
+        return True
+
+    def on_touch_up(self, touch):
+        if 'swipe_from' not in touch.ud:
+            return super().on_touch_up(touch)
+        touch.ud['hold'].cancel()
+        if touch.ud.get('boosting'):
             self.set_speed(self.base_speed)
+        elif not touch.ud['swiped'] and not self.started and not self._menu_visible():
+            self.start_game()  # tap to start
+        return True
+
+    def _touch_hold(self, touch):
+        """Keeping a finger still on the board speeds the snake up, like holding a direction key."""
+        if self.started and not (self.game_over or self.is_paused or touch.ud['swiped']):
+            touch.ud['boosting'] = True
+            self.set_speed(self.max_speed)
+
+    def _on_sound_button(self, *args):
+        self.set_sound(not self.sounds.enabled)
 
 
 def keyboard_handler(instance, key, scancode=None, codepoint=None, modifiers=None):

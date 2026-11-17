@@ -6,7 +6,7 @@ from kivy.storage.jsonstore import JsonStore
 
 MAX_RECORDS = 10
 MAX_NAME_LENGTH = 12
-DEFAULT_SETTINGS = {"speed": 3, "maze": "Campaign", "sound": True}
+DEFAULT_SETTINGS = {"speed": 3, "maze": "Campaign", "sound": True, "dpad": False}
 
 
 def data_dir():

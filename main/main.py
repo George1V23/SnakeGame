@@ -3,7 +3,8 @@ import sys
 
 # The SDL2 bundled with Kivy can hang forever opening the PulseAudio driver on PipeWire systems;
 # ALSA (routed through PipeWire/Pulse anyway) avoids that. Set before Kivy loads; an explicit env value wins.
-if sys.platform.startswith("linux"):
+# Android's Python also reports "linux"; python-for-android sets ANDROID_ARGUMENT, and there ALSA is unavailable.
+if sys.platform.startswith("linux") and "ANDROID_ARGUMENT" not in os.environ:
     os.environ.setdefault("SDL_AUDIODRIVER", "alsa")
 
 from kivy.app import App
@@ -12,6 +13,9 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
 from kivy.uix.button import Button
 from kivy.uix.textinput import TextInput
+from kivy.uix.scrollview import ScrollView
+from kivy.metrics import dp, sp
+from kivy.core.window import Window
 
 from kivy.config import Config
 Config.set("input", "mouse", "mouse,disable_multitouch")  # disables Kivy's right/middle-click touch-circle simulator
@@ -20,6 +24,7 @@ Config.set("kivy", "exit_on_escape", "0")  # prevents ESC from closing the app
 from graphics import Graphics
 from editor import LevelEditor
 from levels import CAMPAIGN, CUSTOM_SLOTS, MAZE_CHOICES, is_custom
+from scale import IS_TOUCH
 
 
 # Menu layout displayed before the game starts
@@ -38,29 +43,29 @@ class Menu(RelativeLayout):
         # Container for main menu elements
         self.menu_box = BoxLayout(
             orientation='vertical',
-            spacing=10,
+            spacing=dp(10),
             size_hint=(None, None),
-            size=(400, 520),
+            size=(dp(400), dp(520)),
             pos_hint={'center_x': 0.5, 'center_y': 0.5}
         )
 
         # Title label
         self.title_label = Label(
             text="SNAKE GAME",
-            font_size=48,
+            font_size=sp(48),
             bold=True,
             color=(0.2, 0.9, 0.4, 1),
             size_hint=(1, None),
-            height=60
+            height=dp(60)
         )
         self.menu_box.add_widget(self.title_label)
 
         # Player name used for the score records
-        name_row = BoxLayout(orientation='horizontal', spacing=10, size_hint=(1, None), height=40)
-        name_row.add_widget(Label(text="Player:", font_size=20, size_hint=(0.3, 1)))
+        name_row = BoxLayout(orientation='horizontal', spacing=dp(10), size_hint=(1, None), height=dp(40))
+        name_row.add_widget(Label(text="Player:", font_size=sp(20), size_hint=(0.3, 1)))
         self.name_input = TextInput(
             text=self.graphics.records.player if self.graphics else "Player",
-            font_size=20,
+            font_size=sp(20),
             multiline=False,
             write_tab=False,
             size_hint=(0.7, 1)
@@ -70,30 +75,39 @@ class Menu(RelativeLayout):
         self.menu_box.add_widget(name_row)
 
         # Speed 1-9 (Snake II style) and sound toggle
-        settings_row = BoxLayout(orientation='horizontal', spacing=6, size_hint=(1, None), height=40)
-        slower_btn = Button(text="-", font_size=24, size_hint=(None, 1), width=40)
+        settings_row = BoxLayout(orientation='horizontal', spacing=dp(6), size_hint=(1, None), height=dp(40))
+        slower_btn = Button(text="-", font_size=sp(24), size_hint=(None, 1), width=dp(40))
         slower_btn.bind(on_release=lambda *a: self.change_speed(-1))
-        self.speed_label = Label(font_size=20, size_hint=(None, 1), width=110)
-        faster_btn = Button(text="+", font_size=24, size_hint=(None, 1), width=40)
+        self.speed_label = Label(font_size=sp(20), size_hint=(None, 1), width=dp(110))
+        faster_btn = Button(text="+", font_size=sp(24), size_hint=(None, 1), width=dp(40))
         faster_btn.bind(on_release=lambda *a: self.change_speed(1))
-        self.sound_btn = Button(font_size=18, background_color=(0.4, 0.4, 0.6, 1))
+        self.sound_btn = Button(font_size=sp(18), background_color=(0.4, 0.4, 0.6, 1))
         self.sound_btn.bind(on_release=self.toggle_sound)
         for widget in (slower_btn, self.speed_label, faster_btn, self.sound_btn):
             settings_row.add_widget(widget)
         self.menu_box.add_widget(settings_row)
 
         # Maze choice: Campaign (all mazes, level by level) or one maze played endlessly
-        self.maze_btn = Button(font_size=20, size_hint=(1, None), height=40, background_color=(0.5, 0.35, 0.2, 1))
+        self.maze_btn = Button(font_size=sp(20), size_hint=(1, None), height=dp(40), background_color=(0.5, 0.35, 0.2, 1))
         self.maze_btn.bind(on_release=self.next_maze)
         self.menu_box.add_widget(self.maze_btn)
+
+        # Touch screens: swipe always works; the on-screen D-pad is optional
+        self.dpad_btn = None
+        if IS_TOUCH:
+            self.dpad_btn = Button(font_size=sp(18), size_hint=(1, None), height=dp(40),
+                                   background_color=(0.35, 0.35, 0.35, 1))
+            self.dpad_btn.bind(on_release=self.toggle_dpad)
+            self.menu_box.add_widget(self.dpad_btn)
+            self.menu_box.height += dp(50)
         self._refresh_settings()
 
         # Play Game Button
         self.play_btn = Button(
             text="Play Game",
-            font_size=24,
+            font_size=sp(24),
             size_hint=(1, None),
-            height=50,
+            height=dp(50),
             background_color=(0.2, 0.7, 0.3, 1)
         )
         self.play_btn.bind(on_release=self.start_play_mode)
@@ -102,9 +116,9 @@ class Menu(RelativeLayout):
         # Level Editor Button
         self.edit_btn = Button(
             text="Level Editor",
-            font_size=24,
+            font_size=sp(24),
             size_hint=(1, None),
-            height=50,
+            height=dp(50),
             background_color=(0.2, 0.5, 0.8, 1)
         )
         self.edit_btn.bind(on_release=self.start_edit_mode)
@@ -113,51 +127,59 @@ class Menu(RelativeLayout):
         # High Scores Button
         self.records_btn = Button(
             text="High Scores",
-            font_size=24,
+            font_size=sp(24),
             size_hint=(1, None),
-            height=50,
+            height=dp(50),
             background_color=(0.8, 0.6, 0.1, 1)
         )
         self.records_btn.bind(on_release=self.show_records)
         self.menu_box.add_widget(self.records_btn)
 
         # Controls description
+        if IS_TOUCH:
+            controls = ("Swipe to turn | Hold a finger still = faster | Back = Menu\n"
+                        "Campaign: eat 10 food per level. Gold = timed bonus.\n")
+            editor_help = "Editor: tap / drag paints the tool | Erase tool removes\n"
+        else:
+            controls = ("WASD / Arrows move (hold = faster) | P Pause | M Sound | ESC Menu\n"
+                        "Campaign: eat 10 food per level. Gold = timed bonus.\n")
+            editor_help = "Editor: Left = paint tool | Right = Food | Middle = Erase | Wheel = tool\n"
         self.info_label = Label(
-            text="WASD / Arrows move (hold = faster) | P Pause | M Sound | ESC Menu\n"
-                 "Campaign: eat 10 food per level. Gold = timed bonus.\n"
-                 "Power-ups: [color=3399ff]Slow[/color] | [color=33ffe6]Shrink[/color] | [color=cc66ff]Ghost[/color]\n"
-                 "Editor: Left = paint tool | Right = Food | Middle = Erase | Wheel = tool\n"
+            text=controls +
+                 "Power-ups: [color=3399ff]Slow[/color] | [color=33ffe6]Shrink[/color] | [color=999999]Ghost[/color]\n" +
+                 editor_help +
                  "[color=40a626]Grass[/color] slows the snake down",
             markup=True,
-            font_size=14,
+            font_size=sp(14),
             halign='center',
             color=(0.8, 0.8, 0.8, 1),
             size_hint=(1, None),
-            height=110
+            height=dp(110)
         )
         self.menu_box.add_widget(self.info_label)
 
-        self.add_widget(self.menu_box)
+        self.menu_panel = self._scrollable(self.menu_box)
+        self.add_widget(self.menu_panel)
 
         # High score table panel
         self.records_box = BoxLayout(
             orientation='vertical',
-            spacing=10,
+            spacing=dp(10),
             size_hint=(None, None),
-            size=(700, 440),
+            size=(dp(700), dp(440)),
             pos_hint={'center_x': 0.5, 'center_y': 0.5}
         )
         self.records_box.add_widget(Label(
             text="HIGH SCORES",
-            font_size=40,
+            font_size=sp(40),
             bold=True,
             color=(1, 0.85, 0.2, 1),
             size_hint=(1, None),
-            height=55
+            height=dp(55)
         ))
         self.records_table = Label(
             font_name='RobotoMono-Regular',
-            font_size=15,
+            font_size=sp(15),
             halign='left',
             valign='top'
         )
@@ -165,14 +187,32 @@ class Menu(RelativeLayout):
         self.records_box.add_widget(self.records_table)
         records_back_btn = Button(
             text="Back",
-            font_size=20,
+            font_size=sp(20),
             size_hint=(None, None),
-            size=(140, 45),
+            size=(dp(140), dp(45)),
             pos_hint={'center_x': 0.5},
             background_color=(0.5, 0.5, 0.5, 1)
         )
         records_back_btn.bind(on_release=self.show_main_menu)
         self.records_box.add_widget(records_back_btn)
+        self.records_panel = self._scrollable(self.records_box)
+
+    @staticmethod
+    def _scrollable(box):
+        """Center `box` in a ScrollView that shrinks to the window, so short screens (phones) can scroll it."""
+        box.pos_hint = {}
+        scroll = ScrollView(size_hint=(None, None), do_scroll_x=False, bar_width=dp(4),
+                            pos_hint={'center_x': 0.5, 'center_y': 0.5})
+        scroll.add_widget(box)
+
+        def fit(*args):
+            scroll.width = min(box.width, Window.width)
+            scroll.height = min(box.height, Window.height - dp(10))
+
+        Window.bind(size=fit)
+        box.bind(size=fit)
+        fit()
+        return scroll
 
     def _update_bg(self, *args):
         self._bg_rect.pos = self.pos
@@ -189,6 +229,12 @@ class Menu(RelativeLayout):
         else:
             note = " (endless)"
         self.maze_btn.text = f"Maze: {g.mode}{note}"
+        if self.dpad_btn:
+            self.dpad_btn.text = "Controls: Swipe + D-pad" if g.use_dpad else "Controls: Swipe"
+
+    def toggle_dpad(self, *args):
+        self.graphics.set_dpad(not self.graphics.use_dpad)
+        self._refresh_settings()
 
     def _apply_settings(self, speed, mode):
         self.graphics.configure(speed, mode)
@@ -224,10 +270,10 @@ class Menu(RelativeLayout):
         lines += ["", f"Games played: {records.games_played}"]
         self.records_table.text = "\n".join(lines)
 
-        if self.menu_box in self.children:
-            self.remove_widget(self.menu_box)
-        if self.records_box not in self.children:
-            self.add_widget(self.records_box)
+        if self.menu_panel in self.children:
+            self.remove_widget(self.menu_panel)
+        if self.records_panel not in self.children:
+            self.add_widget(self.records_panel)
 
     def start_play_mode(self, *args):
         """Switch to Game Play mode."""
@@ -265,10 +311,10 @@ class Menu(RelativeLayout):
         """Return to the Main Menu."""
         if self.parent:
             self.parent.close_editor()
-        if self.records_box in self.children:
-            self.remove_widget(self.records_box)
-        if self.menu_box not in self.children:
-            self.add_widget(self.menu_box)
+        if self.records_panel in self.children:
+            self.remove_widget(self.records_panel)
+        if self.menu_panel not in self.children:
+            self.add_widget(self.menu_panel)
 
         self.opacity = 1
         self.disabled = False
